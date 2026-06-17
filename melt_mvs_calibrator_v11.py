@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
@@ -104,6 +104,13 @@ def arc_points(cx, cy, r, segments, zero_angle_deg, clockwise):
     return [point_on_circle(cx, cy, r, zero_angle_deg + sign * 360.0 * i / segments) for i in range(segments + 1)]
 
 
+def rotate_point(p, deg):
+    th = math.radians(deg)
+    c = math.cos(th)
+    s = math.sin(th)
+    return (p[0] * c - p[1] * s, p[0] * s + p[1] * c)
+
+
 def dist(a, b):
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
@@ -152,16 +159,16 @@ def glyph_width_cells(text):
 
 
 def make_label_lines(cfg):
-    band_h = cfg["layers_per_band"] * cfg["layer_height"]
+    layer_h = cfg["layer_height"]
     if cfg["label_layout"] == "one-line":
         return [
             f'{cfg["printer_name"]}/{cfg["filament_name"]}/ND {fmt(cfg["nozzle_size"],2)}mm '
-            f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C x {cfg["layers_per_band"]} x {fmt(band_h)}mm '
+            f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C x {cfg["layers_per_band"]} x {fmt(layer_h)}mm '
             f'MAX MVS:{fmt(cfg["mvs_max"])}mm³/s'
         ]
     return [
         f'{cfg["printer_name"]}/{cfg["filament_name"]}/ND {fmt(cfg["nozzle_size"],2)}mm',
-        f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C x {cfg["layers_per_band"]} x {fmt(band_h)}mm',
+        f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C x {cfg["layers_per_band"]} x {fmt(layer_h)}mm',
         f'MAX MVS:{fmt(cfg["mvs_max"])}mm³/s',
     ]
 
@@ -1069,6 +1076,7 @@ def emit_label(lines_out, cfg, label_lines, fa):
         char_h = max_allowed_h
 
     typed_segments, info = _build_txt_shx_width_typed_segments(cfg, label_lines, char_h)
+    typed_segments.extend(build_ring_mvs_label_segments(cfg, label_lines))
 
     stroke_width = cfg.get("label_stroke_width", 0.8)
     connector_width = cfg.get("label_connector_width", 0.4)
@@ -1559,6 +1567,68 @@ def _build_txt_shx_width_typed_segments(cfg, label_lines, char_h):
     }
 
 
+def base_bottom_label_height(cfg, label_lines):
+    char_h, _ = calc_label_height(cfg, label_lines)
+    max_allowed_h = 10.0 if cfg["circle_diameter"] >= 200 else 5.0
+    return min(char_h, max_allowed_h)
+
+
+def build_single_line_text_segments(cfg, text, char_h):
+    if not text.strip():
+        return []
+    cell = char_h / 7.0
+    x_scale = cfg.get("label_x_scale", 0.55)
+    line_width = cfg["line_width"]
+    advance_units = _label_advance_units(cell, x_scale, line_width)
+    width = _txt_stroke_line_width_units(text) * cell * x_scale
+    x_left = -width / 2.0
+    y0 = -char_h / 2.0
+    out = []
+    for ci, ch in enumerate(text):
+        x0 = x_left + ci * advance_units * cell * x_scale
+        geom = _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width)
+        out.extend(geom["segments"])
+    return out
+
+
+def build_ring_mvs_label_segments(cfg, label_lines):
+    if not cfg["label"]:
+        return []
+    values = ring_mvs_label_values(cfg)
+
+    char_h = base_bottom_label_height(cfg, label_lines) * 0.5
+    radius = cfg["circle_diameter"] / 2.0
+    cx = cfg["square_x"] + radius
+    cy = cfg["square_y"] + radius
+    sign = -1.0 if cfg["clockwise"] else 1.0
+    text_radius = radius - char_h * 0.75 - 1.0
+    out = []
+
+    for value in values:
+        t = 0.0 if abs(cfg["mvs_max"] - cfg["mvs_min"]) < 1e-9 else (value - cfg["mvs_min"]) / (cfg["mvs_max"] - cfg["mvs_min"])
+        angle = cfg["zero_angle_deg"] + sign * 360.0 * t
+        ax, ay = point_on_circle(cx, cy, text_radius, angle)
+        tangent_deg = angle + (-90.0 if cfg["clockwise"] else 90.0)
+        text = str(int(round(value))) if abs(value - round(value)) < 1e-9 else fmt(value)
+        segs = build_single_line_text_segments(cfg, text, char_h)
+        for p0, p1, kind in segs:
+            rp0 = rotate_point(p0, tangent_deg)
+            rp1 = rotate_point(p1, tangent_deg)
+            out.append(((rp0[0] + ax, rp0[1] + ay), (rp1[0] + ax, rp1[1] + ay), kind))
+    return out
+
+
+def ring_mvs_label_values(cfg):
+    values = [cfg["mvs_min"]]
+    start_multiple = math.ceil(cfg["mvs_min"] / 5.0) * 5.0
+    v = start_multiple
+    while v <= cfg["mvs_max"] + 1e-9:
+        if abs(v - cfg["mvs_min"]) > 1e-9:
+            values.append(v)
+        v += 5.0
+    return values
+
+
 def emit_label(lines_out, cfg, label_lines, fa):
     """
     v19 label:
@@ -1599,6 +1669,7 @@ def emit_label(lines_out, cfg, label_lines, fa):
         f"; label_actual_height={fmt(char_h)}",
         f"; label_x_scale={fmt(cfg.get('label_x_scale', 0.55))}",
         f"; label_lines={' | '.join(label_lines)}",
+        f"; ring_mvs_values={','.join(fmt(v) for v in ring_mvs_label_values(cfg))}",
         f"; label_segments_total={len(typed_segments)}",
         f"; label_segments_stroke={stroke_count}",
         f"; label_segments_connector={connector_count}",
@@ -2015,3 +2086,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -552,6 +552,77 @@ function labelHeight(cfg: GeneratorConfig, lines: string[]) {
   return Math.max(1, Math.min(hByWidth, hByHeight));
 }
 
+function baseBottomLabelHeight(cfg: GeneratorConfig) {
+  const lines = makeLabelLines(cfg);
+  const computed = labelHeight(cfg, lines);
+  return Math.min(computed, cfg.circle_diameter >= 200 ? 10 : 5);
+}
+
+function rotatePoint(p: Point, deg: number): Point {
+  const th = (deg * Math.PI) / 180;
+  const c = Math.cos(th);
+  const s = Math.sin(th);
+  return [p[0] * c - p[1] * s, p[0] * s + p[1] * c];
+}
+
+function transformSegments(segs: TypedSegment[], deg: number, tx: number, ty: number): TypedSegment[] {
+  return segs.map(([a, b, kind]) => {
+    const ra = rotatePoint(a, deg);
+    const rb = rotatePoint(b, deg);
+    return [[ra[0] + tx, ra[1] + ty], [rb[0] + tx, rb[1] + ty], kind];
+  });
+}
+
+function buildSingleLineTextSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
+  if (!text.trim()) return [];
+  const cell = charH / 7;
+  const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth);
+  const width = lineWidthUnits(text, advanceUnits) * cell * xScale;
+  const xLeft = -width / 2;
+  const y0 = -charH / 2;
+  const all: TypedSegment[] = [];
+  [...text].forEach((ch, ci) => {
+    const x0 = xLeft + ci * advanceUnits * cell * xScale;
+    const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
+    all.push(...glyph.segments);
+  });
+  return all;
+}
+
+function ringMvsLabelValues(cfg: GeneratorConfig) {
+  const values: number[] = [cfg.mvs_min];
+  const startMultiple = Math.ceil(cfg.mvs_min / 5) * 5;
+  for (let v = startMultiple; v <= cfg.mvs_max + 1e-9; v += 5) {
+    if (Math.abs(v - cfg.mvs_min) < 1e-9) continue;
+    values.push(v);
+  }
+  return values;
+}
+
+function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
+  if (!cfg.label) return [];
+  const values = ringMvsLabelValues(cfg);
+  const charH = baseBottomLabelHeight(cfg) * 0.5;
+  const radius = cfg.circle_diameter / 2;
+  const cx = cfg.square_x + radius;
+  const cy = cfg.square_y + radius;
+  const sign = cfg.clockwise ? -1 : 1;
+  const textRadius = radius - charH * 0.75 - 1.0;
+  const all: TypedSegment[] = [];
+
+  values.forEach((value) => {
+    const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+    const angle = cfg.zero_angle_deg + sign * 360 * t;
+    const anchor = pointOnCircle(cx, cy, textRadius, angle);
+    const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
+    const text = Number.isInteger(value) ? String(Math.round(value)) : fmt(value);
+    const segs = buildSingleLineTextSegments(text, charH, cfg.label_x_scale, cfg.line_width);
+    all.push(...transformSegments(segs, tangentDeg, anchor[0], anchor[1]));
+  });
+
+  return all;
+}
+
 export function makeLabelLines(cfg: GeneratorConfig) {
   const layerHeightText = fmt(cfg.layer_height);
   if (cfg.label_layout === "one-line") {
@@ -569,8 +640,7 @@ export function makeLabelLines(cfg: GeneratorConfig) {
 export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
   if (!cfg.label) return [];
   const lines = makeLabelLines(cfg);
-  let charH = labelHeight(cfg, lines);
-  charH = Math.min(charH, cfg.circle_diameter >= 200 ? 10 : 5);
+  let charH = baseBottomLabelHeight(cfg);
   const cell = charH / 7;
   const lineGap = charH * 0.65;
   const centerX = cfg.square_x + cfg.circle_diameter / 2;
@@ -589,8 +659,7 @@ export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
     linesGlyphs.push(glyphs);
     glyphs.forEach((g) => all.push(...g.segments));
   });
-
-  return [...all, ...buildInterlineRails(linesGlyphs, cell), ...buildHullLoops(all)];
+  return [...all, ...buildInterlineRails(linesGlyphs, cell), ...buildHullLoops(all), ...buildRingMvsLabels(cfg)];
 }
 
 function emitFirmwareMotionBlock(lines: string[], cfg: GeneratorConfig) {
@@ -753,7 +822,7 @@ export function makeGcode(cfg: GeneratorConfig) {
     emitTemperatureSet(lines, cfg, cfg.start_temp, "min");
     const typed = buildLabelSegments(cfg);
     const labelWidth = LABEL_OUTLINE_WIDTH;
-    lines.push("", "; ---------- bottom inner label ----------", "; label_toolpath=glyph_outer_double_contour_plus_convex_hull", "; label_visual_layout=three_line_default", "; label_path_order=line1_LTR_line2_LTR_line3_LTR", "; label_width_mode=fixed_label_width", `; label_line_width=${fmt(labelWidth)}`, "; label_inner_contours_per_glyph=2", "; label_outer_hull_passes=2", "; label_inner_contour_gap_mm=0", `; label_layout=${cfg.label_layout}`, `; label_lines=${labelLines.join(" | ")}`, `; label_segments_total=${typed.length}`, `; label_segments_stroke=${typed.filter((s) => s[2] === "stroke").length}`, `; label_segments_connector=${typed.filter((s) => s[2] === "connector").length}`);
+    lines.push("", "; ---------- bottom inner label ----------", "; label_toolpath=glyph_outer_double_contour_plus_convex_hull", "; label_visual_layout=three_line_default", "; label_path_order=line1_LTR_line2_LTR_line3_LTR", "; label_width_mode=fixed_label_width", `; label_line_width=${fmt(labelWidth)}`, "; label_inner_contours_per_glyph=2", "; label_outer_hull_passes=2", "; label_inner_contour_gap_mm=0", `; label_layout=${cfg.label_layout}`, `; label_lines=${labelLines.join(" | ")}`, `; ring_mvs_values=${ringMvsLabelValues(cfg).map((v) => fmt(v)).join(",")}`, `; label_segments_total=${typed.length}`, `; label_segments_stroke=${typed.filter((s) => s[2] === "stroke").length}`, `; label_segments_connector=${typed.filter((s) => s[2] === "connector").length}`);
     if (typed.length) {
       const start = typed[0][0];
       lines.push(`G0 Z${fmt(cfg.layer_height)} F${fmt(cfg.z_travel_speed * 60, 1)}`);
