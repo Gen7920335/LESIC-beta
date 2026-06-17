@@ -30,6 +30,10 @@ function optimalLineWidth(nozzleSize: number) {
   return optimalLineWidthByNozzle[nozzleSize] ?? Math.max(0.18, nozzleSize * 1.2);
 }
 
+function optimalLayerHeight(nozzleSize: number) {
+  return Math.round(nozzleSize * 0.6 * 1000) / 1000;
+}
+
 type Language = "ko" | "en";
 
 const translations = {
@@ -59,7 +63,7 @@ const translations = {
     tempStepDesc: "Temperature drop per band.",
     layersPerBandDesc: "Layers per temperature band.",
     bedTempDesc: "Standalone bed temperature.",
-    layerHeightDesc: "Layer height.",
+    layerHeightDesc: "Automatically set to 60% of nozzle diameter.",
     mvsMinDesc: "Starting MVS value, mm3/s.",
     mvsMaxDesc: "Maximum MVS value, mm3/s.",
     arcSegmentsDesc: "Segments per circle.",
@@ -195,7 +199,7 @@ const initialDraft: Draft = {
   temp_wait_tolerance: 0.5,
   bed_x: "",
   bed_y: "",
-  layer_height: 0.24,
+  layer_height: optimalLayerHeight(0.4),
   mvs_min: 8,
   mvs_max: 24,
   arc_segments: 360,
@@ -343,7 +347,14 @@ function App() {
               description={t.nozzleSizeDesc}
               value={String(draft.nozzle_size)}
               options={nozzleOptions.map((v) => ({ value: String(v), label: `${fmt(v, 2)} mm` }))}
-              onChange={(v) => update("nozzle_size", Number(v))}
+              onChange={(v) => {
+                const nozzleSize = Number(v);
+                setDraft((prev) => ({
+                  ...prev,
+                  nozzle_size: nozzleSize,
+                  layer_height: optimalLayerHeight(nozzleSize),
+                }));
+              }}
             />
             <TextField label="filament_name" description={t.filamentNameDesc} value={draft.filament_name} onChange={(v) => update("filament_name", v)} />
           </Fieldset>
@@ -357,7 +368,7 @@ function App() {
           </Fieldset>
 
           <Fieldset title={t.geometry}>
-            <NumberField label="layer_height" description={t.layerHeightDesc} value={draft.layer_height} onChange={(v) => update("layer_height", v)} />
+            <NumberField label="layer_height" description={t.layerHeightDesc} value={draft.layer_height} onChange={() => {}} readOnly />
             <NumberField label="mvs_min" description={t.mvsMinDesc} value={draft.mvs_min} onChange={(v) => update("mvs_min", v)} />
             <NumberField label="mvs_max" description={t.mvsMaxDesc} value={draft.mvs_max} onChange={(v) => update("mvs_max", v)} />
             <NumberField label="arc_segments" description={t.arcSegmentsDesc} value={draft.arc_segments} onChange={(v) => update("arc_segments", Math.max(12, Math.round(v)))} />
@@ -412,8 +423,8 @@ function TextField({ label, description, value, onChange, placeholder }: { label
   return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<input value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} /></label>;
 }
 
-function NumberField({ label, description, value, onChange }: { label: string; description?: string; value: number; onChange: (value: number) => void }) {
-  return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<input type="number" value={value} onChange={(e) => onChange(Number(e.target.value))} /></label>;
+function NumberField({ label, description, value, onChange, readOnly = false }: { label: string; description?: string; value: number; onChange: (value: number) => void; readOnly?: boolean }) {
+  return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<input type="number" value={value} readOnly={readOnly} onChange={(e) => onChange(Number(e.target.value))} /></label>;
 }
 
 function Select({

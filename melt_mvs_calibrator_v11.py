@@ -76,6 +76,24 @@ def filament_area(diameter):
     return math.pi * (diameter / 2.0) ** 2
 
 
+OPTIMAL_LINE_WIDTH_BY_NOZZLE = {
+    0.8: 0.96,
+    0.6: 0.72,
+    0.4: 0.48,
+    0.25: 0.30,
+    0.2: 0.24,
+    0.15: 0.18,
+}
+
+
+def optimal_line_width(nozzle_size):
+    return OPTIMAL_LINE_WIDTH_BY_NOZZLE.get(nozzle_size, max(0.18, nozzle_size * 1.2))
+
+
+def optimal_layer_height(nozzle_size):
+    return round(nozzle_size * 0.6, 3)
+
+
 def point_on_circle(cx, cy, r, theta_deg):
     th = math.radians(theta_deg)
     return cx + r * math.cos(th), cy + r * math.sin(th)
@@ -1877,13 +1895,13 @@ def make_parser():
     p.add_argument("--temp-step", type=float, default=1.0)
     p.add_argument("--bands", type=int)
     p.add_argument("--layers-per-band", type=int, default=10)
-    p.add_argument("--layer-height", type=float, default=0.24)
+    p.add_argument("--layer-height", type=float)
 
     p.add_argument("--mvs-min", type=float, default=0.1)
     p.add_argument("--mvs-max", type=float, default=20.0)
     p.add_argument("--arc-segments", type=int, default=360)
 
-    p.add_argument("--line-width", type=float, default=0.45)
+    p.add_argument("--line-width", type=float)
     p.add_argument("--filament-diameter", type=float)
 
     p.add_argument("--label", dest="label", action="store_true", default=True)
@@ -1935,12 +1953,13 @@ def main():
         raise SystemExit("ERROR: --temp-step must be greater than 0.")
     if args.start_temp < args.end_temp:
         raise SystemExit("ERROR: --start-temp must be greater than or equal to --end-temp.")
+    nozzle_size = choose(args, preset, "nozzle_size", 0.4)
     cfg = {
         "printer_preset": args.printer_preset,
         "printer_name": choose(args, preset, "printer_name", args.printer_preset),
         "source": preset.get("source", ""),
         "filament_name": args.filament_name,
-        "nozzle_size": choose(args, preset, "nozzle_size", 0.4),
+        "nozzle_size": nozzle_size,
         "bed_x": args.bed_x if args.bed_x is not None else choose(args, preset, "bed_x", 220.0),
         "bed_y": args.bed_y if args.bed_y is not None else choose(args, preset, "bed_y", 220.0),
         "bed_z": preset.get("bed_z", 0),
@@ -1954,11 +1973,11 @@ def main():
         "temp_step": args.temp_step,
         "bands": args.bands if args.bands is not None else max(1, math.ceil((args.start_temp - args.end_temp) / args.temp_step) + 1),
         "layers_per_band": args.layers_per_band,
-        "layer_height": args.layer_height,
+        "layer_height": args.layer_height if args.layer_height is not None else optimal_layer_height(nozzle_size),
         "mvs_min": args.mvs_min,
         "mvs_max": args.mvs_max,
         "arc_segments": args.arc_segments,
-        "line_width": args.line_width,
+        "line_width": args.line_width if args.line_width is not None else optimal_line_width(nozzle_size),
         "filament_diameter": choose(args, preset, "filament_diameter", 1.75),
         "label": args.label,
         "label_layout": args.label_layout,

@@ -1,4 +1,4 @@
-export type FirmwareMode = "klipper" | "marlin" | "bambu" | "unknown";
+﻿export type FirmwareMode = "klipper" | "marlin" | "bambu" | "unknown";
 export type LabelLayout = "three-line" | "one-line";
 export type Point = [number, number];
 export type SegmentKind = "stroke" | "connector";
@@ -553,15 +553,15 @@ function labelHeight(cfg: GeneratorConfig, lines: string[]) {
 }
 
 export function makeLabelLines(cfg: GeneratorConfig) {
-  const bandH = cfg.layers_per_band * cfg.layer_height;
+  const layerHeightText = fmt(cfg.layer_height);
   if (cfg.label_layout === "one-line") {
     return [
-      `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C x ${cfg.layers_per_band} x ${fmt(bandH)}mm MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
+      `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C x ${cfg.layers_per_band} x ${layerHeightText}mm MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
     ];
   }
   return [
     `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm`,
-    `start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C x ${cfg.layers_per_band} x ${fmt(bandH)}mm`,
+    `start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C x ${cfg.layers_per_band} x ${layerHeightText}mm`,
     `MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
   ];
 }
@@ -821,3 +821,4 @@ export function makeGcode(cfg: GeneratorConfig) {
   lines.push("", "; ---------- end of calibration body ----------", `; estimated_total_filament_E_mm=${fmt(estimatedE, 3)}`, "", "; ---------- minimal standalone end ----------", "G92 E0", "G1 E-2 F1800", `G0 Z${fmt(totalHeight + 10)} F1200`, "M104 S0", "M140 S0", "M106 S0", "G90", "; ---------- end minimal standalone end ----------");
   return `${lines.join("\n")}\n`;
 }
+
