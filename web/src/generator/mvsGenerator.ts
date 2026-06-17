@@ -627,12 +627,12 @@ export function makeLabelLines(cfg: GeneratorConfig) {
   const layerHeightText = fmt(cfg.layer_height);
   if (cfg.label_layout === "one-line") {
     return [
-      `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C x ${cfg.layers_per_band} x ${layerHeightText}mm MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
+      `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C×${cfg.layers_per_band}×${layerHeightText}mm MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
     ];
   }
   return [
     `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm`,
-    `start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C x ${cfg.layers_per_band} x ${layerHeightText}mm`,
+    `start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C×${cfg.layers_per_band}×${layerHeightText}mm`,
     `MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
   ];
 }

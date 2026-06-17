@@ -163,12 +163,12 @@ def make_label_lines(cfg):
     if cfg["label_layout"] == "one-line":
         return [
             f'{cfg["printer_name"]}/{cfg["filament_name"]}/ND {fmt(cfg["nozzle_size"],2)}mm '
-            f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C x {cfg["layers_per_band"]} x {fmt(layer_h)}mm '
+            f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C×{cfg["layers_per_band"]}×{fmt(layer_h)}mm '
             f'MAX MVS:{fmt(cfg["mvs_max"])}mm³/s'
         ]
     return [
         f'{cfg["printer_name"]}/{cfg["filament_name"]}/ND {fmt(cfg["nozzle_size"],2)}mm',
-        f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C x {cfg["layers_per_band"]} x {fmt(layer_h)}mm',
+        f'start:{fmt(cfg["start_temp"])}°C/dec:-{fmt(cfg["temp_step"])}°C×{cfg["layers_per_band"]}×{fmt(layer_h)}mm',
         f'MAX MVS:{fmt(cfg["mvs_max"])}mm³/s',
     ]
 
