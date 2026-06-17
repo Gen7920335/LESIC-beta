@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MVS Calibrator Web Standalone</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Segoe UI, Arial, sans-serif; color: #f5f5f5; background: #333; }
+    header { padding: 10px 14px; background: #3a3a3a; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    header p { margin: 4px 0 0; font-size: 13px; }
+    .warning { color: #ffcc66; font-weight: 800; margin-top: 5px; }
+    main { display: grid; grid-template-columns: minmax(420px, 34vw) 1fr; gap: 10px; padding: 8px; height: calc(100vh - 68px); }
+    .controls { overflow: auto; display: grid; align-content: start; gap: 8px; }
+    fieldset { border: 0; margin: 0; padding: 0; background: #404040; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; }
+    legend { grid-column: 1 / -1; width: 100%; padding: 5px 8px; background: #4a4a4a; font-weight: 800; font-size: 16px; }
+    label { display: grid; gap: 3px; padding: 6px; background: #3f3f3f; }
+    span { font-family: Consolas, monospace; font-weight: 800; }
+    input, select, button { font: inherit; min-width: 0; height: 30px; border: 0; }
+    input, select { width: 100%; padding: 0 5px; background: #eee; color: #111; }
+    .check { display: flex; align-items: center; gap: 8px; }
+    .check input { width: 16px; }
+    .work { display: grid; grid-template-rows: auto minmax(0, 1fr) 100px; gap: 8px; min-width: 0; }
+    .bar { display: flex; gap: 8px; }
+    button { min-width: 130px; padding: 0 12px; background: #687f9b; color: white; font-weight: 800; cursor: pointer; }
+    button.primary { background: #ddd; color: #111; }
+    .preview { background: #252525; min-height: 0; padding: 10px; }
+    svg { width: 100%; height: 100%; background: #252525; }
+    .bed { fill: none; stroke: #bbb; stroke-width: .7; }
+    .square { fill: none; stroke: #7ba7db; stroke-width: .65; stroke-dasharray: 1.2 1.2; }
+    .circle { stroke: #f2f2f2; stroke-width: .75; stroke-linecap: round; }
+    .stroke { stroke: white; stroke-width: .85; stroke-linecap: round; }
+    .connector { stroke: #6fa8dc; stroke-width: .45; stroke-linecap: round; }
+    .seam { fill: none; stroke: #ffcc66; stroke-width: 1.2; }
+    text { fill: white; font-size: 4.6px; }
+    text.warn { fill: #ffcc66; }
+    pre { margin: 0; padding: 8px; overflow: auto; background: #1d1d1d; font: 12px Consolas, monospace; white-space: pre-wrap; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; height: auto; } .preview { height: 60vh; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Melt / MVS Calibrator UI v21</h1>
+    <p>Standalone web fallback. Preview is parsed from generated G-code.</p>
+    <div id="warning" class="warning" hidden>Acceleration/speed limits may not be unlocked.</div>
+  </header>
+  <main>
+    <section class="controls">
+      <fieldset>
+        <legend>Printer</legend>
+        <label><span>printer_preset</span><select id="printer_preset"></select></label>
+        <label><span>firmware_mode</span><select id="firmware_mode"><option>klipper</option><option>marlin</option><option>bambu</option><option>unknown</option></select></label>
+        <label><span>output</span><input id="output" value="U1_v21_web.gcode"></label>
+        <label><span>filament_name</span><input id="filament_name" value="Unknown_pla"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Temperature</legend>
+        <label><span>start_temp</span><input id="start_temp" type="number" value="230"></label>
+        <label><span>end_temp</span><input id="end_temp" type="number" value="176"></label>
+        <label><span>temp_step</span><input id="temp_step" type="number" value="1"></label>
+        <label><span>layers_per_band</span><input id="layers_per_band" type="number" value="10"></label>
+        <label><span>bed_temp</span><input id="bed_temp" type="number" value="60"></label>
+      </fieldset>
+      <fieldset>
+        <legend>MVS / Geometry</legend>
+        <label><span>layer_height</span><input id="layer_height" type="number" value="0.24" step="0.01"></label>
+        <label><span>line_width</span><input id="line_width" type="number" value="0.45" step="0.01"></label>
+        <label><span>mvs_min</span><input id="mvs_min" type="number" value="0.1" step="0.1"></label>
+        <label><span>mvs_max</span><input id="mvs_max" type="number" value="20"></label>
+        <label><span>arc_segments</span><input id="arc_segments" type="number" value="360"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Placement</legend>
+        <label><span>bed_x</span><input id="bed_x" placeholder="preset"></label>
+        <label><span>bed_y</span><input id="bed_y" placeholder="preset"></label>
+        <label><span>square_x</span><input id="square_x" placeholder="auto"></label>
+        <label><span>square_y</span><input id="square_y" placeholder="auto"></label>
+        <label><span>circle_diameter</span><input id="circle_diameter" placeholder="auto"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Label</legend>
+        <label class="check"><input id="label" type="checkbox" checked><span>label</span></label>
+        <label><span>label_stroke_width</span><input id="label_stroke_width" type="number" value="0.6" step="0.1"></label>
+        <label><span>label_connector_width</span><input id="label_connector_width" type="number" value="0.2" step="0.1"></label>
+      </fieldset>
+    </section>
+    <section class="work">
+      <div class="bar">
+        <button class="primary" id="generate">Generate G-code</button>
+        <button id="preview">Preview</button>
+      </div>
+      <div class="preview"><svg id="svg"></svg></div>
+      <pre id="log">Ready.</pre>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const n = (id, fallback = 0) => Number($(id).value || fallback);
+    const fmt = (v, d = 4) => Math.abs(v - Math.round(v)) < 10 ** -d ? String(Math.round(v)) : v.toFixed(d).replace(/0+$/, "").replace(/\.$/, "");
+    let presets = {};
+
+    function infer(name) {
+      const k = name.toUpperCase();
+      if (k.includes("BAMBU")) return "bambu";
+      if (["SNAPMAKER_U1", "VORON", "CREALITY_K1", "CREALITY_K2", "SOVOL_SV08", "QIDI"].some(t => k.includes(t))) return "klipper";
+      if (["PRUSA", "ENDER", "SOVOL_SV06", "ANYCUBIC", "ELEGOO", "FLASHFORGE", "ANKER", "SNAPMAKER_J1"].some(t => k.includes(t))) return "marlin";
+      return "unknown";
+    }
+    function bands() {
+      const exact = (n("start_temp") - n("end_temp")) / n("temp_step", 1);
+      return Math.max(1, Math.ceil(exact - 1e-9) + 1);
+    }
+    function cfg() {
+      const name = $("printer_preset").value;
+      const p = presets[name] || {};
+      const bedX = $("bed_x").value ? n("bed_x") : (p.bed_x || 220);
+      const bedY = $("bed_y").value ? n("bed_y") : (p.bed_y || 220);
+      const auto = bedX >= 220 && bedY >= 220 ? {x:10, y:10, d:200} : {x:5, y:5, d:Math.max(1, Math.min(bedX, bedY) - 10)};
+      return {
+        preset: name, printer: p.printer_name || name, bedX, bedY,
+        sx: $("square_x").value ? n("square_x") : (p.square_x || auto.x),
+        sy: $("square_y").value ? n("square_y") : (p.square_y || auto.y),
+        d: $("circle_diameter").value ? n("circle_diameter") : (p.circle_diameter || auto.d),
+        firmware: $("firmware_mode").value, b: bands()
+      };
+    }
+    function moveLine(x, y, e, f, c = "") { return `G1 X${fmt(x)} Y${fmt(y)} E${fmt(e,5)} F${fmt(f,1)} ${c}`; }
+    function makeGcode() {
+      const c = cfg(), r = c.d / 2, cx = c.sx + r, cy = c.sy + r;
+      const lh = n("layer_height"), lw = n("line_width"), mvsMin = n("mvs_min"), mvsMax = n("mvs_max"), segs = Math.max(12, Math.round(n("arc_segments")));
+      const lines = [`; generated by standalone web fallback`, `; printer_preset=${c.preset}`, `; firmware_mode=${c.firmware}`, `; bed_x=${fmt(c.bedX)}`, `; bed_y=${fmt(c.bedY)}`, `; circle_diameter=${fmt(c.d)}`, `; square_x=${fmt(c.sx)}`, `; square_y=${fmt(c.sy)}`, `; bands=${c.b}`, `; start_temp=${fmt(n("start_temp"))}`, `; end_temp=${fmt(n("end_temp"))}`, `; label_lines=${c.printer}/${$("filament_name").value}/ND 0.4mm | MAX MVS:${fmt(mvsMax)}mm³/s`, "", "G90", "M83", "M220 S100", "M221 S100", "; ---------- minimal standalone start ----------", "G28 ; home all axes first", "", "; ---------- firmware motion hint ----------", `; firmware_mode=${c.firmware}`];
+      if (c.firmware === "klipper") lines.push("SET_VELOCITY_LIMIT VELOCITY=300 ACCEL=8000 MINIMUM_CRUISE_RATIO=0 SQUARE_CORNER_VELOCITY=10", "M204 S8000", "M220 S100");
+      else if (c.firmware === "marlin") lines.push("M203 X300 Y300 Z20 E80", "M201 X8000 Y8000 Z300 E5000", "M204 S8000", "M204 P8000 T8000", "M205 X10 Y10 Z0.4 E5", "M220 S100");
+      else if (c.firmware === "bambu") lines.push("; Bambu stock firmware is not Klipper. Keep this conservative.", "M204 S8000", "M204 P8000 T8000", "M220 S100");
+      else lines.push("; firmware_mode=unknown: no acceleration/speed unlock code inserted", "; WARNING: acceleration/speed limits may not be unlocked");
+      lines.push("; ---------- end firmware motion hint ----------", `M140 S${fmt(n("bed_temp"))}`, `M104 S${fmt(n("start_temp"))}`, `M190 S${fmt(n("bed_temp"))}`, `M109 S${fmt(n("start_temp"))}`, "G92 E0");
+      if ($("label").checked) {
+        const y = c.sy + c.d * 0.42, x0 = c.sx + c.d * 0.32, x1 = c.sx + c.d * 0.68;
+        lines.push("", "; ---------- bottom inner label ----------");
+        lines.push(`G0 X${fmt(x0)} Y${fmt(y)} F10800 ; label start`);
+        lines.push(moveLine(x1, y, 0.6, 1200, `; label_stroke width=${fmt(n("label_stroke_width"))}`));
+        lines.push(moveLine(x1, y - 8, 0.2, 1200, `; label_connector width=${fmt(n("label_connector_width"))}`));
+        lines.push(moveLine(x0, y - 8, 0.6, 1200, `; label_stroke width=${fmt(n("label_stroke_width"))}`));
+        lines.push("; ---------- end bottom inner label ----------");
+        lines.push("; label end -> seam connector: continue extrusion, no G0 travel");
+        lines.push(moveLine(cx, c.sy, 1.0, 1200, `; label_connector_to_seam width=${fmt(n("label_connector_width"))}`));
+      }
+      for (let layer = 1; layer <= c.b * n("layers_per_band"); layer++) {
+        const temp = n("start_temp") - n("temp_step") * Math.floor((layer - 1) / n("layers_per_band"));
+        lines.push("", `;LAYER:${layer}`, `;TARGET_TEMP:${fmt(temp)}`);
+        if (layer !== 1) lines.push(`G0 X${fmt(cx)} Y${fmt(c.sy)} F10800`);
+        for (let i = 0; i < segs; i++) {
+          const a = -Math.PI / 2 - Math.PI * 2 * (i + 1) / segs;
+          const pct = (i + .5) / segs;
+          const speed = (mvsMin + (mvsMax - mvsMin) * pct) / (lw * lh);
+          lines.push(moveLine(cx + r * Math.cos(a), cy + r * Math.sin(a), 0.03, speed * 60, `; pct=${fmt(pct*100,2)} req_MVS=${fmt(mvsMin + (mvsMax - mvsMin) * pct,3)}`));
+        }
+      }
+      return lines.join("\n") + "\n";
+    }
+    function parse(gcode) {
+      const segs = [], circle = [];
+      let cur, inLabel = false, inLayer1 = false;
+      for (const line of gcode.split(/\n/)) {
+        if (line.includes("bottom inner label") && !line.includes("end")) inLabel = true;
+        if (line.includes("end bottom inner label")) inLabel = false;
+        if (line.trim() === ";LAYER:1") inLayer1 = true;
+        if (line.trim() === ";LAYER:2") inLayer1 = false;
+        const m = line.match(/^(G0|G1).*?X([-+]?\d*\.?\d+).*?Y([-+]?\d*\.?\d+)/);
+        if (!m) continue;
+        const next = [Number(m[2]), Number(m[3])], old = cur; cur = next;
+        if (!old || m[1] !== "G1") continue;
+        if (inLabel || line.includes("label_connector_to_seam")) segs.push([old, next, line.includes("connector") ? "connector" : "stroke"]);
+        else if (inLayer1 && line.includes("req_MVS")) circle.push([old, next, "circle"]);
+      }
+      return {segs, circle};
+    }
+    function draw() {
+      const c = cfg(), g = makeGcode(), p = parse(g), svg = $("svg");
+      const pad = 18, vb = `${-pad} ${-pad} ${c.bedX + pad*2} ${c.bedY + pad*2}`;
+      svg.setAttribute("viewBox", vb);
+      svg.innerHTML = `<rect class="bed" x="0" y="0" width="${c.bedX}" height="${c.bedY}"/><rect class="square" x="${c.sx}" y="${c.sy}" width="${c.d}" height="${c.d}"/>`;
+      for (const [a,b] of p.circle) svg.insertAdjacentHTML("beforeend", `<line class="circle" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`);
+      for (const [a,b,k] of p.segs) svg.insertAdjacentHTML("beforeend", `<line class="${k}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`);
+      svg.insertAdjacentHTML("beforeend", `<circle class="seam" cx="${c.sx+c.d/2}" cy="${c.sy}" r="2.2"/><text x="4" y="12">Bed ${fmt(c.bedX)}x${fmt(c.bedY)}</text><text x="${c.bedX-92}" y="10">firmware: ${c.firmware}</text><text x="${c.bedX-92}" y="20">bands: ${c.b}</text>${c.firmware==="unknown" ? `<text class="warn" x="${c.bedX-120}" y="32">Acceleration/speed limits may not be unlocked</text>` : ""}`);
+      $("warning").hidden = c.firmware !== "unknown";
+      $("log").textContent = `Preview parsed from generated G-code.\nsegments: label=${p.segs.length}, circle=${p.circle.length}\nbands=${c.b}`;
+      return g;
+    }
+    async function init() {
+      try {
+        presets = await fetch("src/data/printer_presets.json").then(r => r.json());
+      } catch {
+        presets = {
+          SNAPMAKER_U1: { printer_name: "U1", bed_x: 270, bed_y: 270, bed_z: 270, nozzle_size: 0.4, filament_diameter: 1.75, heater: "extruder", zero_angle_deg: -90 },
+          GENERIC_220: { printer_name: "Generic_220", bed_x: 220, bed_y: 220, bed_z: 220, nozzle_size: 0.4, filament_diameter: 1.75, heater: "extruder", zero_angle_deg: -90 }
+        };
+        $("log").textContent = "Loaded built-in fallback presets. Use a local server for the full preset list.";
+      }
+      for (const name of Object.keys(presets).sort()) $("printer_preset").add(new Option(name, name));
+      $("printer_preset").value = presets.SNAPMAKER_U1 ? "SNAPMAKER_U1" : Object.keys(presets).sort()[0];
+      $("firmware_mode").value = infer($("printer_preset").value);
+      $("printer_preset").addEventListener("change", () => { $("firmware_mode").value = infer($("printer_preset").value); draw(); });
+      document.querySelectorAll("input,select").forEach(el => el.addEventListener("input", draw));
+      $("preview").onclick = draw;
+      $("generate").onclick = () => {
+        const blob = new Blob([draw()], {type:"text/plain;charset=utf-8"});
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = $("output").value || "mvs_calibrator.gcode";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      };
+      draw();
+    }
+    init().catch(err => $("log").textContent = String(err));
+  </script>
+</body>
+</html>
