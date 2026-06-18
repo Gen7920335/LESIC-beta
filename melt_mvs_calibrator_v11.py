@@ -14,6 +14,7 @@ LABEL_TEXT_WIDTH = 1.0
 LABEL_OUTLINE_WIDTH = 0.25
 LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2.0 + LABEL_OUTLINE_WIDTH / 2.0
 LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH
+NO_INNER_LOOP_BRIDGE_CHARS = {":", ".", "°", ",", "•"}
 
 
 FONT = {
@@ -1207,6 +1208,43 @@ def _polygon_area(loop):
     return area
 
 
+def _loop_bounds(loop):
+    return {
+        "min_x": min(p[0] for p in loop),
+        "max_x": max(p[0] for p in loop),
+        "min_y": min(p[1] for p in loop),
+        "max_y": max(p[1] for p in loop),
+    }
+
+
+def _loop_center(loop):
+    b = _loop_bounds(loop)
+    return ((b["min_x"] + b["max_x"]) / 2.0, (b["min_y"] + b["max_y"]) / 2.0)
+
+
+def _point_in_loop(p, loop):
+    inside = False
+    j = len(loop) - 1
+    for i in range(len(loop)):
+        pi = loop[i]
+        pj = loop[j]
+        intersects = (pi[1] > p[1]) != (pj[1] > p[1]) and p[0] < ((pj[0] - pi[0]) * (p[1] - pi[1])) / ((pj[1] - pi[1]) or 1e-12) + pi[0]
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _inner_loops_for_outer(outer_loop, loops):
+    if not outer_loop:
+        return []
+    return [loop for loop in loops[1:] if _point_in_loop(_loop_center(loop), outer_loop)]
+
+
+def _should_bridge_inner_loops(ch):
+    return ch not in NO_INNER_LOOP_BRIDGE_CHARS
+
+
 def _extract_all_loops(segs):
     outgoing = {}
     for a, b, _ in segs:
@@ -1256,6 +1294,17 @@ def _pick_vertical_loop_point(loop, target_x, side):
     if side == "top":
         return min(loop, key=lambda p: (abs(p[0] - target_x), -p[1]))
     return min(loop, key=lambda p: (abs(p[0] - target_x), p[1]))
+
+
+def _pick_punctuation_rail_anchor(g, side):
+    loops = g.get("outline_loops") or ([g["outer_loop"]] if g["outer_loop"] else [])
+    if not loops:
+        return None
+    if side == "top":
+        selected = max(loops, key=lambda loop: _loop_bounds(loop)["max_y"])
+    else:
+        selected = min(loops, key=lambda loop: _loop_bounds(loop)["min_y"])
+    return _pick_vertical_loop_point(selected, _loop_center(selected)[0], side)
 
 
 def _build_inner_loop_bridges(outer_loop, inner_loops):
@@ -1347,7 +1396,7 @@ def _build_glyph_outer_contours(ch, x0, y0, cell, x_scale, line_width):
 
         loops = _extract_all_loops(contour)
         outer_loop = loops[0] if loops else []
-        inner_loops = loops[1:]
+        inner_loops = _inner_loops_for_outer(outer_loop, loops) if _should_bridge_inner_loops(ch) else []
         for loop in loops:
             for a, b in zip(loop[:-1], loop[1:]):
                 _append_segment(all_segments, a, b, "stroke")
@@ -1366,6 +1415,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
             "segments": [],
             "outer_loop": [],
             "inner_loops": [],
+            "outline_loops": [],
             "source_points": source_points,
             "bbox": {"min_x": x0, "max_x": x0, "min_y": y0, "max_y": y0},
         }
@@ -1380,6 +1430,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
     all_segments = []
     outer_loop = []
     inner_loops = []
+    outline_loops = []
 
     for idx, radius in enumerate(radii):
         pad = radius + sample * 2.0
@@ -1422,7 +1473,8 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
         loops = _extract_all_loops(contour)
         if idx == len(radii) - 1:
             outer_loop = loops[0] if loops else []
-            inner_loops = loops[1:]
+            inner_loops = _inner_loops_for_outer(outer_loop, loops) if _should_bridge_inner_loops(ch) else []
+            outline_loops = loops
         for loop in loops:
             for a, b in zip(loop[:-1], loop[1:]):
                 _append_segment(all_segments, a, b, "stroke")
@@ -1435,6 +1487,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
         "segments": all_segments,
         "outer_loop": outer_loop,
         "inner_loops": inner_loops,
+        "outline_loops": outline_loops,
         "source_points": source_points,
         "bbox": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y},
     }
@@ -1581,14 +1634,16 @@ def _build_interline_rails(lines_glyphs, cell):
         for g in lower:
             if g.get("char") not in punctuation_chars:
                 continue
-            x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            start = _pick_vertical_loop_point(g["outer_loop"], x_center, "top")
+            start = _pick_punctuation_rail_anchor(g, "top")
+            if not start:
+                continue
             _append_segment(segs, start, (start[0], lower_rail_y), "connector")
         for g in upper:
             if g.get("char") not in punctuation_chars:
                 continue
-            x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            start = _pick_vertical_loop_point(g["outer_loop"], x_center, "bottom")
+            start = _pick_punctuation_rail_anchor(g, "bottom")
+            if not start:
+                continue
             _append_segment(segs, start, (start[0], upper_rail_y), "connector")
     last_line = [g for g in lines_glyphs[-1] if g["outer_loop"]] if lines_glyphs else []
     if last_line:
@@ -1602,8 +1657,9 @@ def _build_interline_rails(lines_glyphs, cell):
         for g in last_line:
             if g.get("char") not in punctuation_chars:
                 continue
-            x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            start = _pick_vertical_loop_point(g["outer_loop"], x_center, "bottom")
+            start = _pick_punctuation_rail_anchor(g, "bottom")
+            if not start:
+                continue
             _append_segment(segs, start, (start[0], bottom_rail_y), "connector")
     return segs
 

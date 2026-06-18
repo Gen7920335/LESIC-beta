@@ -90,6 +90,7 @@ const LABEL_TEXT_WIDTH = 1.0;
 const LABEL_OUTLINE_WIDTH = 0.25;
 const LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2 + LABEL_OUTLINE_WIDTH / 2;
 const LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH;
+const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", "°", ",", "•"]);
 
 const FONT: Record<string, Point[][]> = {
   "0": [[ [0, 0], [0, 7], [5, 7], [5, 0], [0, 0], [5, 7] ]],
@@ -269,6 +270,40 @@ function polygonArea(loop: Point[]) {
   return area;
 }
 
+function loopBounds(loop: Point[]) {
+  return {
+    minX: Math.min(...loop.map((p) => p[0])),
+    maxX: Math.max(...loop.map((p) => p[0])),
+    minY: Math.min(...loop.map((p) => p[1])),
+    maxY: Math.max(...loop.map((p) => p[1])),
+  };
+}
+
+function loopCenter(loop: Point[]): Point {
+  const b = loopBounds(loop);
+  return [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2];
+}
+
+function pointInLoop(p: Point, loop: Point[]) {
+  let inside = false;
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const pi = loop[i];
+    const pj = loop[j];
+    const intersects = pi[1] > p[1] !== pj[1] > p[1] && p[0] < ((pj[0] - pi[0]) * (p[1] - pi[1])) / (pj[1] - pi[1] || 1e-12) + pi[0];
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function innerLoopsForOuter(outerLoop: Point[], loops: Point[][]) {
+  if (!outerLoop.length) return [];
+  return loops.slice(1).filter((loop) => pointInLoop(loopCenter(loop), outerLoop));
+}
+
+function shouldBridgeInnerLoops(ch: string) {
+  return !NO_INNER_LOOP_BRIDGE_CHARS.has(ch);
+}
+
 function extractAllLoops(segs: TypedSegment[]) {
   const outgoing = new Map<string, Array<{ start: Point; end: Point }>>();
   segs.forEach(([a, b]) => {
@@ -328,6 +363,19 @@ function pickVerticalLoopPoint(loop: Point[], targetX: number, side: "top" | "bo
     return side === "top" ? b[1] - a[1] : a[1] - b[1];
   });
   return sorted[0];
+}
+
+function pickPunctuationRailAnchor(g: GlyphBuild, side: "top" | "bottom") {
+  const loops = g.outlineLoops.length ? g.outlineLoops : g.outerLoop.length ? [g.outerLoop] : [];
+  if (!loops.length) return undefined;
+  const selected = loops.reduce((best, loop) => {
+    const bestBounds = loopBounds(best);
+    const loopBoundsValue = loopBounds(loop);
+    return side === "top"
+      ? loopBoundsValue.maxY > bestBounds.maxY ? loop : best
+      : loopBoundsValue.minY < bestBounds.minY ? loop : best;
+  }, loops[0]);
+  return pickVerticalLoopPoint(selected, loopCenter(selected)[0], side);
 }
 
 function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): TypedSegment[] {
@@ -409,7 +457,7 @@ function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xSc
 
     const loops = extractAllLoops(contour);
     const outerLoop = loops[0] ?? [];
-    const innerLoops = loops.slice(1);
+    const innerLoops = shouldBridgeInnerLoops(ch) ? innerLoopsForOuter(outerLoop, loops) : [];
     loops.forEach((loop) => {
       for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
     });
@@ -425,6 +473,7 @@ type GlyphBuild = {
   segments: TypedSegment[];
   outerLoop: Point[];
   innerLoops: Point[][];
+  outlineLoops: Point[][];
   sourcePoints: Point[];
   bbox: { minX: number; maxX: number; minY: number; maxY: number };
 };
@@ -433,7 +482,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
   const centerlines = buildGlyphCenterlines(ch, x0, y0, cell, xScale);
   const sourcePoints = glyphSourcePoints(ch, x0, y0, cell, xScale);
   if (!centerlines.length || !sourcePoints.length) {
-    return { char: ch, segments: [], outerLoop: [], innerLoops: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
+    return { char: ch, segments: [], outerLoop: [], innerLoops: [], outlineLoops: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
   }
 
   const points = centerlines.flatMap(([a, b]) => [a, b]);
@@ -446,6 +495,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
   const all: TypedSegment[] = [];
   let outerLoop: Point[] = [];
   let innerLoops: Point[][] = [];
+  let outlineLoops: Point[][] = [];
 
   radii.forEach((radius, idx) => {
     const pad = radius + sample * 2;
@@ -477,7 +527,8 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
         const loops = extractAllLoops(contour);
         if (idx === radii.length - 1) {
           outerLoop = loops[0] ?? [];
-          innerLoops = loops.slice(1);
+          innerLoops = shouldBridgeInnerLoops(ch) ? innerLoopsForOuter(outerLoop, loops) : [];
+          outlineLoops = loops;
         }
         loops.forEach((loop) => {
           for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
@@ -486,7 +537,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
         if (idx === radii.length - 1) buildDetachedGlyphSpine(ch, loops).forEach((seg) => all.push(seg));
     });
 
-  return { char: ch, segments: all, outerLoop, innerLoops, sourcePoints, bbox: { minX, maxX, minY, maxY } };
+  return { char: ch, segments: all, outerLoop, innerLoops, outlineLoops, sourcePoints, bbox: { minX, maxX, minY, maxY } };
 }
 
 function nearestLoopPoint(loop: Point[], target: Point) {
@@ -599,14 +650,14 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
     appendSegment(segs, [lowerMinX, lowerRailY], [lowerMaxX, lowerRailY], "connector");
     lower.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
-      const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      const start = pickVerticalLoopPoint(g.outerLoop, xCenter, "top");
+      const start = pickPunctuationRailAnchor(g, "top");
+      if (!start) return;
       appendSegment(segs, start, [start[0], lowerRailY], "connector");
     });
     upper.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
-      const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      const start = pickVerticalLoopPoint(g.outerLoop, xCenter, "bottom");
+      const start = pickPunctuationRailAnchor(g, "bottom");
+      if (!start) return;
       appendSegment(segs, start, [start[0], upperRailY], "connector");
     });
   }
@@ -621,8 +672,8 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
     appendSegment(segs, [lastMinX, bottomRailY], [lastMaxX, bottomRailY], "connector");
     lastLine.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
-      const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      const start = pickVerticalLoopPoint(g.outerLoop, xCenter, "bottom");
+      const start = pickPunctuationRailAnchor(g, "bottom");
+      if (!start) return;
       appendSegment(segs, start, [start[0], bottomRailY], "connector");
     });
   }
