@@ -1270,6 +1270,22 @@ def _build_inner_loop_bridges(outer_loop, inner_loops):
     return bridges
 
 
+def _build_detached_glyph_spine(ch, loops):
+    if ch not in {":", ".", "°"}:
+        return []
+    points = [p for loop in loops for p in loop]
+    if not points:
+        return []
+    min_x = min(p[0] for p in points)
+    max_x = max(p[0] for p in points)
+    min_y = min(p[1] for p in points)
+    max_y = max(p[1] for p in points)
+    x_center = (min_x + max_x) / 2.0
+    segs = []
+    _append_segment(segs, (x_center, min_y), (x_center, max_y), "stroke")
+    return segs
+
+
 def _build_glyph_outer_contours(ch, x0, y0, cell, x_scale, line_width):
     centerlines = _build_glyph_segments_only(ch, x0, y0, cell, x_scale)
     if not centerlines:
@@ -1330,6 +1346,7 @@ def _build_glyph_outer_contours(ch, x0, y0, cell, x_scale, line_width):
             for a, b in zip(loop[:-1], loop[1:]):
                 _append_segment(all_segments, a, b, "stroke")
         all_segments.extend(_build_inner_loop_bridges(outer_loop, inner_loops))
+        all_segments.extend(_build_detached_glyph_spine(ch, loops))
 
     return all_segments
 
@@ -1404,6 +1421,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
                 _append_segment(all_segments, a, b, "stroke")
         if idx == len(radii) - 1:
             all_segments.extend(_build_inner_loop_bridges(outer_loop, inner_loops))
+            all_segments.extend(_build_detached_glyph_spine(ch, loops))
 
     return {
         "segments": all_segments,

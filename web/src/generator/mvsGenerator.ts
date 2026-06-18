@@ -339,6 +339,18 @@ function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): Typed
   return bridges;
 }
 
+function buildDetachedGlyphSpine(ch: string, loops: Point[][]): TypedSegment[] {
+  if (![":", ".", "°"].includes(ch)) return [];
+  const points = loops.flatMap((loop) => loop);
+  if (!points.length) return [];
+  const minX = Math.min(...points.map((p) => p[0]));
+  const maxX = Math.max(...points.map((p) => p[0]));
+  const minY = Math.min(...points.map((p) => p[1]));
+  const maxY = Math.max(...points.map((p) => p[1]));
+  const xCenter = (minX + maxX) / 2;
+  return [[[xCenter, minY], [xCenter, maxY], "stroke"]];
+}
+
 function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xScale: number, lineWidth: number) {
   const centerlines = buildGlyphCenterlines(ch, x0, y0, cell, xScale);
   if (!centerlines.length) return [];
@@ -393,6 +405,7 @@ function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xSc
       for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
     });
     buildInnerLoopBridges(outerLoop, innerLoops).forEach((seg) => all.push(seg));
+    buildDetachedGlyphSpine(ch, loops).forEach((seg) => all.push(seg));
   });
 
   return all;
@@ -460,6 +473,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
           for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
         });
         if (idx === radii.length - 1) buildInnerLoopBridges(outerLoop, innerLoops).forEach((seg) => all.push(seg));
+        if (idx === radii.length - 1) buildDetachedGlyphSpine(ch, loops).forEach((seg) => all.push(seg));
     });
 
   return { segments: all, outerLoop, innerLoops, sourcePoints, bbox: { minX, maxX, minY, maxY } };
