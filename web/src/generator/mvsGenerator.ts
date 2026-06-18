@@ -727,58 +727,16 @@ function parseMove(line: string) {
   return { cmd, vals };
 }
 
-export function getPreviewData(cfg: GeneratorConfig, gcode: string): PreviewData {
+export function getPreviewData(cfg: GeneratorConfig): PreviewData {
   const radius = cfg.circle_diameter / 2;
   const cx = cfg.square_x + radius;
   const cy = cfg.square_y + radius;
   const fallbackCircle = arcPoints(cx, cy, radius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
-  const labelSegments: TypedSegment[] = [];
-  const circleSegments: TypedSegment[] = [];
-  let insideLabel = false;
-  let inLayerOne = false;
-  let cur: Point | undefined;
-
-  for (const rawLine of gcode.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (line.includes("---------- bottom inner label ----------") && !line.includes("end")) {
-      insideLabel = true;
-      continue;
-    }
-    if (line.includes("---------- end bottom inner label ----------")) {
-      insideLabel = false;
-      continue;
-    }
-    if (line === ";LAYER:1") {
-      inLayerOne = true;
-      continue;
-    }
-    if (line === ";LAYER:2") {
-      inLayerOne = false;
-    }
-
-    const move = parseMove(line);
-    if (!move) continue;
-    const old = cur;
-    const next: Point = [
-      Number.isFinite(move.vals.X) ? move.vals.X : cur?.[0] ?? NaN,
-      Number.isFinite(move.vals.Y) ? move.vals.Y : cur?.[1] ?? NaN,
-    ];
-    if (!Number.isFinite(next[0]) || !Number.isFinite(next[1])) continue;
-    cur = next;
-
-    if (!old || move.cmd !== "G1") continue;
-    if (insideLabel || line.includes("label_connector_to_seam")) {
-      const kind = line.includes("label_connector") ? "connector" : "stroke";
-      labelSegments.push([old, next, kind]);
-    } else if (inLayerOne && line.includes("req_MVS=")) {
-      circleSegments.push([old, next, "stroke"]);
-    }
-  }
-
+  const labelSegments = cfg.label ? buildLabelSegments(cfg) : [];
   return {
     bed: { x: cfg.bed_x, y: cfg.bed_y },
     square: { x: cfg.square_x, y: cfg.square_y, d: cfg.circle_diameter },
-    circleSegments: circleSegments.length ? circleSegments : fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"]),
+    circleSegments: fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"]),
     labelSegments,
     seam: fallbackCircle[0],
     totalLayers: cfg.bands * cfg.layers_per_band,

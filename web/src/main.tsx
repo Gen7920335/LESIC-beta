@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import presetsJson from "./data/printer_presets.json";
 import {
@@ -270,14 +270,15 @@ function App() {
   const [draft, setDraft] = useState<Draft>(initialDraft);
   const [language, setLanguage] = useState<Language>("ko");
   const [showGcode, setShowGcode] = useState(false);
+  const [generatedGcode, setGeneratedGcode] = useState("");
   const t = translations[language];
   const [logs, setLogs] = useState<string[]>([translations.ko.readyLog]);
-  const { cfg, gcode, error } = useMemo(() => {
+  const { cfg, error } = useMemo(() => {
     try {
       const built = buildConfig(draft);
-      return { cfg: built, gcode: makeGcode(built), error: "" };
+      return { cfg: built, error: "" };
     } catch (err) {
-      return { cfg: null, gcode: "", error: err instanceof Error ? err.message : String(err) };
+      return { cfg: null, error: err instanceof Error ? err.message : String(err) };
     }
   }, [draft]);
 
@@ -291,6 +292,7 @@ function App() {
 
   function generate() {
     if (!cfg || error) return;
+    const gcode = makeGcode(cfg);
     const blob = new Blob([gcode], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -298,6 +300,7 @@ function App() {
     a.download = cfg.output.endsWith(".gcode") ? cfg.output : `${cfg.output}.gcode`;
     a.click();
     URL.revokeObjectURL(url);
+    setGeneratedGcode(gcode);
     setLogs((prev) => [...prev, t.generatedLog(a.download)]);
   }
 
@@ -406,9 +409,9 @@ function App() {
           </div>
 
           {error && <div className="error">{error}</div>}
-          {cfg && <Preview cfg={cfg} gcode={gcode} language={language} />}
+          {cfg && <Preview cfg={cfg} language={language} />}
           <pre className="log">{logs.slice(-7).join("\n")}</pre>
-          {showGcode && <textarea className="gcode" readOnly value={gcode} />}
+          {showGcode && <textarea className="gcode" readOnly value={generatedGcode} />}
         </section>
       </div>
     </main>
@@ -420,11 +423,57 @@ function Fieldset({ title, children }: { title: string; children: React.ReactNod
 }
 
 function TextField({ label, description, value, onChange, placeholder }: { label: string; description?: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
-  return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<input value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} /></label>;
+  const [draftValue, setDraftValue] = useState(value);
+  useEffect(() => setDraftValue(value), [value]);
+  function commit() {
+    if (draftValue !== value) onChange(draftValue);
+  }
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {description && <small>{description}</small>}
+      <input
+        value={draftValue}
+        placeholder={placeholder}
+        onChange={(e) => setDraftValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </label>
+  );
 }
 
 function NumberField({ label, description, value, onChange, readOnly = false }: { label: string; description?: string; value: number; onChange: (value: number) => void; readOnly?: boolean }) {
-  return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<input type="number" value={value} readOnly={readOnly} onChange={(e) => onChange(Number(e.target.value))} /></label>;
+  const [draftValue, setDraftValue] = useState(String(value));
+  useEffect(() => setDraftValue(String(value)), [value]);
+  function commit() {
+    if (readOnly) return;
+    const parsed = Number(draftValue);
+    if (Number.isFinite(parsed) && parsed !== value) onChange(parsed);
+    else if (!Number.isFinite(parsed)) setDraftValue(String(value));
+  }
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {description && <small>{description}</small>}
+      <input
+        type="number"
+        value={draftValue}
+        readOnly={readOnly}
+        onChange={(e) => setDraftValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </label>
+  );
 }
 
 function Select({
@@ -443,9 +492,9 @@ function Select({
   return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<select value={value} onChange={(e) => onChange(e.target.value)}>{options.map((o) => typeof o === "string" ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
 }
 
-function Preview({ cfg, gcode, language }: { cfg: GeneratorConfig; gcode: string; language: Language }) {
+function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }) {
   const t = translations[language];
-  const data = useMemo(() => getPreviewData(cfg, gcode), [cfg, gcode]);
+  const data = useMemo(() => getPreviewData(cfg), [cfg]);
   const pad = 18;
   const vb = `${-pad} ${-pad} ${data.bed.x + pad * 2} ${data.bed.y + pad * 2}`;
   const mapPoint = ([x, y]: [number, number]) => [x, data.bed.y - y] as const;
