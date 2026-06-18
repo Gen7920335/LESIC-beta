@@ -90,7 +90,7 @@ const LABEL_TEXT_WIDTH = 1.0;
 const LABEL_OUTLINE_WIDTH = 0.25;
 const LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2 + LABEL_OUTLINE_WIDTH / 2;
 const LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH;
-const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", "°", ",", "•"]);
+const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", ",", "•"]);
 
 const FONT: Record<string, Point[][]> = {
   "0": [[ [0, 0], [0, 7], [5, 7], [5, 0], [0, 0], [5, 7] ]],
@@ -356,6 +356,26 @@ function pickHorizontalLoopPoint(loop: Point[], targetY: number, side: "left" | 
   return sorted[0];
 }
 
+function horizontalLoopBridgePoints(loop: Point[], targetY: number): [Point, Point] | undefined {
+  const xs: number[] = [];
+  for (let i = 0; i < loop.length - 1; i++) {
+    const a = loop[i];
+    const b = loop[i + 1];
+    const y0 = a[1];
+    const y1 = b[1];
+    if (Math.abs(y0 - y1) <= 1e-9) {
+      if (Math.abs(y0 - targetY) <= 1e-9) xs.push(a[0], b[0]);
+      continue;
+    }
+    if (targetY < Math.min(y0, y1) - 1e-9 || targetY > Math.max(y0, y1) + 1e-9) continue;
+    const t = (targetY - y0) / (y1 - y0);
+    if (t < -1e-9 || t > 1 + 1e-9) continue;
+    xs.push(a[0] + (b[0] - a[0]) * t);
+  }
+  if (xs.length < 2) return undefined;
+  return [[Math.min(...xs), targetY], [Math.max(...xs), targetY]];
+}
+
 function pickVerticalLoopPoint(loop: Point[], targetX: number, side: "top" | "bottom") {
   const sorted = [...loop].sort((a, b) => {
     const dx = Math.abs(a[0] - targetX) - Math.abs(b[0] - targetX);
@@ -402,6 +422,16 @@ function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): Typed
     appendSegment(bridges, innerRight, outerRight, "stroke");
   });
   return bridges;
+}
+
+function buildForcedLoopBridge(ch: string, loops: Point[][]): TypedSegment[] {
+  if (ch !== "°" || !loops.length) return [];
+  const loop = loops[0];
+  const targetY = loopCenter(loop)[1];
+  const bridge = horizontalLoopBridgePoints(loop, targetY);
+  const left = bridge?.[0] ?? pickHorizontalLoopPoint(loop, targetY, "left");
+  const right = bridge?.[1] ?? pickHorizontalLoopPoint(loop, targetY, "right");
+  return [[left, right, "stroke"]];
 }
 
 function buildDetachedGlyphSpine(ch: string, loops: Point[][]): TypedSegment[] {
@@ -470,6 +500,7 @@ function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xSc
       for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
     });
     buildInnerLoopBridges(outerLoop, innerLoops).forEach((seg) => all.push(seg));
+    buildForcedLoopBridge(ch, loops).forEach((seg) => all.push(seg));
     buildDetachedGlyphSpine(ch, loops).forEach((seg) => all.push(seg));
   });
 
@@ -542,6 +573,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
           for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
         });
         if (idx === radii.length - 1) buildInnerLoopBridges(outerLoop, innerLoops).forEach((seg) => all.push(seg));
+        if (idx === radii.length - 1) buildForcedLoopBridge(ch, loops).forEach((seg) => all.push(seg));
         if (idx === radii.length - 1) buildDetachedGlyphSpine(ch, loops).forEach((seg) => all.push(seg));
     });
 

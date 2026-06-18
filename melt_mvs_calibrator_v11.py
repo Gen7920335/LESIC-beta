@@ -14,7 +14,7 @@ LABEL_TEXT_WIDTH = 1.0
 LABEL_OUTLINE_WIDTH = 0.25
 LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2.0 + LABEL_OUTLINE_WIDTH / 2.0
 LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH
-NO_INNER_LOOP_BRIDGE_CHARS = {":", ".", "°", ",", "•"}
+NO_INNER_LOOP_BRIDGE_CHARS = {":", ".", ",", "•"}
 
 
 FONT = {
@@ -1290,6 +1290,26 @@ def _pick_horizontal_loop_point(loop, target_y, side):
     return min(loop, key=lambda p: (abs(p[1] - target_y), -p[0]))
 
 
+def _horizontal_loop_bridge_points(loop, target_y):
+    xs = []
+    for a, b in zip(loop[:-1], loop[1:]):
+        y0 = a[1]
+        y1 = b[1]
+        if abs(y0 - y1) <= 1e-9:
+            if abs(y0 - target_y) <= 1e-9:
+                xs.extend([a[0], b[0]])
+            continue
+        if target_y < min(y0, y1) - 1e-9 or target_y > max(y0, y1) + 1e-9:
+            continue
+        t = (target_y - y0) / (y1 - y0)
+        if t < -1e-9 or t > 1.0 + 1e-9:
+            continue
+        xs.append(a[0] + (b[0] - a[0]) * t)
+    if len(xs) < 2:
+        return None
+    return (min(xs), target_y), (max(xs), target_y)
+
+
 def _pick_vertical_loop_point(loop, target_x, side):
     if side == "top":
         return min(loop, key=lambda p: (abs(p[0] - target_x), -p[1]))
@@ -1333,6 +1353,22 @@ def _build_inner_loop_bridges(outer_loop, inner_loops):
         _append_segment(bridges, outer_left, inner_left, "stroke")
         _append_segment(bridges, inner_right, outer_right, "stroke")
     return bridges
+
+
+def _build_forced_loop_bridge(ch, loops):
+    if ch != "°" or not loops:
+        return []
+    loop = loops[0]
+    target_y = _loop_center(loop)[1]
+    bridge = _horizontal_loop_bridge_points(loop, target_y)
+    if bridge:
+        left, right = bridge
+    else:
+        left = _pick_horizontal_loop_point(loop, target_y, "left")
+        right = _pick_horizontal_loop_point(loop, target_y, "right")
+    segs = []
+    _append_segment(segs, left, right, "stroke")
+    return segs
 
 
 def _build_detached_glyph_spine(ch, loops):
@@ -1411,6 +1447,7 @@ def _build_glyph_outer_contours(ch, x0, y0, cell, x_scale, line_width):
             for a, b in zip(loop[:-1], loop[1:]):
                 _append_segment(all_segments, a, b, "stroke")
         all_segments.extend(_build_inner_loop_bridges(outer_loop, inner_loops))
+        all_segments.extend(_build_forced_loop_bridge(ch, loops))
         all_segments.extend(_build_detached_glyph_spine(ch, loops))
 
     return all_segments
@@ -1490,6 +1527,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
                 _append_segment(all_segments, a, b, "stroke")
         if idx == len(radii) - 1:
             all_segments.extend(_build_inner_loop_bridges(outer_loop, inner_loops))
+            all_segments.extend(_build_forced_loop_bridge(ch, loops))
             all_segments.extend(_build_detached_glyph_spine(ch, loops))
 
     return {
