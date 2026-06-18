@@ -583,8 +583,7 @@ function buildSingleLineTextSegments(text: string, charH: number, xScale: number
   const all: TypedSegment[] = [];
   [...text].forEach((ch, ci) => {
     const x0 = xLeft + ci * advanceUnits * cell * xScale;
-    const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
-    all.push(...glyph.segments);
+    all.push(...buildGlyphCenterlines(ch, x0, y0, cell, xScale));
   });
   return all;
 }
@@ -593,7 +592,7 @@ function ringMvsLabelValues(cfg: GeneratorConfig) {
   const values: number[] = [cfg.mvs_min];
   const startMultiple = Math.ceil(cfg.mvs_min / 5) * 5;
   for (let v = startMultiple; v <= cfg.mvs_max + 1e-9; v += 5) {
-    if (Math.abs(v - cfg.mvs_min) < 2.5) continue;
+    if (Math.abs(v - cfg.mvs_min) < 1e-9) continue;
     values.push(v);
   }
   return values;

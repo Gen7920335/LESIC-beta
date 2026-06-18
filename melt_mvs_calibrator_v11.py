@@ -1587,8 +1587,7 @@ def build_single_line_text_segments(cfg, text, char_h):
     out = []
     for ci, ch in enumerate(text):
         x0 = x_left + ci * advance_units * cell * x_scale
-        geom = _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width)
-        out.extend(geom["segments"])
+        out.extend(_build_glyph_segments_only(ch, x0, y0, cell, x_scale))
     return out
 
 
@@ -1624,7 +1623,7 @@ def ring_mvs_label_values(cfg):
     start_multiple = math.ceil(cfg["mvs_min"] / 5.0) * 5.0
     v = start_multiple
     while v <= cfg["mvs_max"] + 1e-9:
-        if abs(v - cfg["mvs_min"]) >= 2.5:
+        if abs(v - cfg["mvs_min"]) > 1e-9:
             values.append(v)
         v += 5.0
     return values
