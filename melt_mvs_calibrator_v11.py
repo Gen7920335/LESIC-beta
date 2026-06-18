@@ -1252,6 +1252,12 @@ def _pick_horizontal_loop_point(loop, target_y, side):
     return min(loop, key=lambda p: (abs(p[1] - target_y), -p[0]))
 
 
+def _pick_vertical_loop_point(loop, target_x, side):
+    if side == "top":
+        return min(loop, key=lambda p: (abs(p[0] - target_x), -p[1]))
+    return min(loop, key=lambda p: (abs(p[0] - target_x), p[1]))
+
+
 def _build_inner_loop_bridges(outer_loop, inner_loops):
     bridges = []
     if not outer_loop or not inner_loops:
@@ -1576,12 +1582,14 @@ def _build_interline_rails(lines_glyphs, cell):
             if g.get("char") not in punctuation_chars:
                 continue
             x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            _append_segment(segs, (x_center, g["bbox"]["max_y"]), (x_center, lower_rail_y), "connector")
+            start = _pick_vertical_loop_point(g["outer_loop"], x_center, "top")
+            _append_segment(segs, start, (start[0], lower_rail_y), "connector")
         for g in upper:
             if g.get("char") not in punctuation_chars:
                 continue
             x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, upper_rail_y), "connector")
+            start = _pick_vertical_loop_point(g["outer_loop"], x_center, "bottom")
+            _append_segment(segs, start, (start[0], upper_rail_y), "connector")
     last_line = [g for g in lines_glyphs[-1] if g["outer_loop"]] if lines_glyphs else []
     if last_line:
         last_pts = [p for g in last_line for p in g["outer_loop"]]
@@ -1595,7 +1603,8 @@ def _build_interline_rails(lines_glyphs, cell):
             if g.get("char") not in punctuation_chars:
                 continue
             x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, bottom_rail_y), "connector")
+            start = _pick_vertical_loop_point(g["outer_loop"], x_center, "bottom")
+            _append_segment(segs, start, (start[0], bottom_rail_y), "connector")
     return segs
 
 

@@ -321,6 +321,15 @@ function pickHorizontalLoopPoint(loop: Point[], targetY: number, side: "left" | 
   return sorted[0];
 }
 
+function pickVerticalLoopPoint(loop: Point[], targetX: number, side: "top" | "bottom") {
+  const sorted = [...loop].sort((a, b) => {
+    const dx = Math.abs(a[0] - targetX) - Math.abs(b[0] - targetX);
+    if (Math.abs(dx) > 1e-9) return dx;
+    return side === "top" ? b[1] - a[1] : a[1] - b[1];
+  });
+  return sorted[0];
+}
+
 function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): TypedSegment[] {
   const bridges: TypedSegment[] = [];
   if (!outerLoop.length || !innerLoops.length) return bridges;
@@ -591,12 +600,14 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
     lower.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
       const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      appendSegment(segs, [xCenter, g.bbox.maxY], [xCenter, lowerRailY], "connector");
+      const start = pickVerticalLoopPoint(g.outerLoop, xCenter, "top");
+      appendSegment(segs, start, [start[0], lowerRailY], "connector");
     });
     upper.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
       const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, upperRailY], "connector");
+      const start = pickVerticalLoopPoint(g.outerLoop, xCenter, "bottom");
+      appendSegment(segs, start, [start[0], upperRailY], "connector");
     });
   }
   const lastLine = linesGlyphs[linesGlyphs.length - 1]?.filter((g) => g.outerLoop.length) ?? [];
@@ -611,7 +622,8 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
     lastLine.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
       const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, bottomRailY], "connector");
+      const start = pickVerticalLoopPoint(g.outerLoop, xCenter, "bottom");
+      appendSegment(segs, start, [start[0], bottomRailY], "connector");
     });
   }
   return segs;
