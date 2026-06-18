@@ -378,6 +378,14 @@ function pickPunctuationRailAnchor(g: GlyphBuild, side: "top" | "bottom") {
   return pickVerticalLoopPoint(selected, loopCenter(selected)[0], side);
 }
 
+function offsetPointTowardRail(start: Point, railY: number, clearance: number): Point {
+  const dy = railY - start[1];
+  const distance = Math.abs(dy);
+  if (distance <= 1e-9) return start;
+  if (distance <= clearance) return [start[0], railY];
+  return [start[0], start[1] + Math.sign(dy) * clearance];
+}
+
 function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): TypedSegment[] {
   const bridges: TypedSegment[] = [];
   if (!outerLoop.length || !innerLoops.length) return bridges;
@@ -628,7 +636,7 @@ function connectAdjacentGlyphs(left: GlyphBuild, right: GlyphBuild, cell: number
   return segs;
 }
 
-function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
+function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number, connectorClearance: number) {
   const segs: TypedSegment[] = [];
   const punctuationChars = new Set([":", ".", "°"]);
   for (let i = 0; i < linesGlyphs.length - 1; i++) {
@@ -652,13 +660,13 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
       if (!punctuationChars.has(g.char)) return;
       const start = pickPunctuationRailAnchor(g, "top");
       if (!start) return;
-      appendSegment(segs, start, [start[0], lowerRailY], "connector");
+      appendSegment(segs, offsetPointTowardRail(start, lowerRailY, connectorClearance), [start[0], lowerRailY], "connector");
     });
     upper.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
       const start = pickPunctuationRailAnchor(g, "bottom");
       if (!start) return;
-      appendSegment(segs, start, [start[0], upperRailY], "connector");
+      appendSegment(segs, offsetPointTowardRail(start, upperRailY, connectorClearance), [start[0], upperRailY], "connector");
     });
   }
   const lastLine = linesGlyphs[linesGlyphs.length - 1]?.filter((g) => g.outerLoop.length) ?? [];
@@ -674,7 +682,7 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
       if (!punctuationChars.has(g.char)) return;
       const start = pickPunctuationRailAnchor(g, "bottom");
       if (!start) return;
-      appendSegment(segs, start, [start[0], bottomRailY], "connector");
+      appendSegment(segs, offsetPointTowardRail(start, bottomRailY, connectorClearance), [start[0], bottomRailY], "connector");
     });
   }
   return segs;
@@ -830,7 +838,7 @@ export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
   });
   return [
     ...all,
-    ...buildInterlineRails(linesGlyphs, cell),
+    ...buildInterlineRails(linesGlyphs, cell, Math.max(0, cfg.label_connector_width / 2)),
     ...buildHullLoops(all),
     ...buildRingMvsTickSegments(cfg),
     ...buildRingMvsLabels(cfg),

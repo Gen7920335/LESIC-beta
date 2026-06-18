@@ -1307,6 +1307,16 @@ def _pick_punctuation_rail_anchor(g, side):
     return _pick_vertical_loop_point(selected, _loop_center(selected)[0], side)
 
 
+def _offset_point_toward_rail(start, rail_y, clearance):
+    dy = rail_y - start[1]
+    distance = abs(dy)
+    if distance <= 1e-9:
+        return start
+    if distance <= clearance:
+        return (start[0], rail_y)
+    return (start[0], start[1] + (clearance if dy > 0 else -clearance))
+
+
 def _build_inner_loop_bridges(outer_loop, inner_loops):
     bridges = []
     if not outer_loop or not inner_loops:
@@ -1610,7 +1620,7 @@ def _connect_adjacent_glyphs(left_geom, right_geom, cell):
     return segs
 
 
-def _build_interline_rails(lines_glyphs, cell):
+def _build_interline_rails(lines_glyphs, cell, connector_clearance):
     segs = []
     punctuation_chars = {":", ".", "°"}
     for upper_line, lower_line in zip(lines_glyphs[:-1], lines_glyphs[1:]):
@@ -1637,14 +1647,14 @@ def _build_interline_rails(lines_glyphs, cell):
             start = _pick_punctuation_rail_anchor(g, "top")
             if not start:
                 continue
-            _append_segment(segs, start, (start[0], lower_rail_y), "connector")
+            _append_segment(segs, _offset_point_toward_rail(start, lower_rail_y, connector_clearance), (start[0], lower_rail_y), "connector")
         for g in upper:
             if g.get("char") not in punctuation_chars:
                 continue
             start = _pick_punctuation_rail_anchor(g, "bottom")
             if not start:
                 continue
-            _append_segment(segs, start, (start[0], upper_rail_y), "connector")
+            _append_segment(segs, _offset_point_toward_rail(start, upper_rail_y, connector_clearance), (start[0], upper_rail_y), "connector")
     last_line = [g for g in lines_glyphs[-1] if g["outer_loop"]] if lines_glyphs else []
     if last_line:
         last_pts = [p for g in last_line for p in g["outer_loop"]]
@@ -1660,7 +1670,7 @@ def _build_interline_rails(lines_glyphs, cell):
             start = _pick_punctuation_rail_anchor(g, "bottom")
             if not start:
                 continue
-            _append_segment(segs, start, (start[0], bottom_rail_y), "connector")
+            _append_segment(segs, _offset_point_toward_rail(start, bottom_rail_y, connector_clearance), (start[0], bottom_rail_y), "connector")
     return segs
 
 
@@ -1707,7 +1717,7 @@ def _build_txt_shx_width_typed_segments(cfg, label_lines, char_h):
             all_segments.extend(geom["segments"])
         lines_glyphs.append(glyphs)
 
-    all_segments.extend(_build_interline_rails(lines_glyphs, cell))
+    all_segments.extend(_build_interline_rails(lines_glyphs, cell, max(0.0, cfg.get("label_connector_width", 0.2) / 2.0)))
     all_segments.extend(_build_hull_loops(all_segments))
 
     return all_segments, {

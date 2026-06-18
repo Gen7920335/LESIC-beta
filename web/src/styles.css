@@ -290,7 +290,7 @@ svg {
 .connector {
   stroke: #7fc8ff;
   stroke-width: 2.2;
-  stroke-linecap: round;
+  stroke-linecap: butt;
   opacity: 0.95;
 }
 
