@@ -263,7 +263,13 @@ function convexHull(points: Point[]) {
   return [...lower, ...upper];
 }
 
-function extractLargestLoop(segs: TypedSegment[]) {
+function polygonArea(loop: Point[]) {
+  let area = 0;
+  for (let i = 0; i < loop.length - 1; i++) area += loop[i][0] * loop[i + 1][1] - loop[i + 1][0] * loop[i][1];
+  return area;
+}
+
+function extractAllLoops(segs: TypedSegment[]) {
   const outgoing = new Map<string, Array<{ start: Point; end: Point }>>();
   segs.forEach(([a, b]) => {
     const key = pointKey(a);
@@ -273,7 +279,7 @@ function extractLargestLoop(segs: TypedSegment[]) {
   });
 
   const visited = new Set<string>();
-  let best: Point[] = [];
+  const loops: Point[][] = [];
 
   segs.forEach(([a, b]) => {
     const startEdge = edgeKey(a, b);
@@ -299,16 +305,38 @@ function extractLargestLoop(segs: TypedSegment[]) {
     }
 
     if (loop.length >= 4) {
-      let area = 0;
-      for (let i = 0; i < loop.length - 1; i++) area += loop[i][0] * loop[i + 1][1] - loop[i + 1][0] * loop[i][1];
-      if (Math.abs(area) > Math.abs(best.reduce((acc, p, i) => {
-        if (i === best.length - 1) return acc;
-        return acc + p[0] * best[i + 1][1] - best[i + 1][0] * p[1];
-      }, 0))) best = loop;
+      loops.push(loop);
     }
   });
 
-  return best;
+  return loops.sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)));
+}
+
+function pickHorizontalLoopPoint(loop: Point[], targetY: number, side: "left" | "right") {
+  const sorted = [...loop].sort((a, b) => {
+    const dy = Math.abs(a[1] - targetY) - Math.abs(b[1] - targetY);
+    if (Math.abs(dy) > 1e-9) return dy;
+    return side === "left" ? a[0] - b[0] : b[0] - a[0];
+  });
+  return sorted[0];
+}
+
+function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): TypedSegment[] {
+  const bridges: TypedSegment[] = [];
+  if (!outerLoop.length || !innerLoops.length) return bridges;
+  innerLoops.forEach((loop) => {
+    const ys = loop.map((p) => p[1]);
+    const targetY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const innerLeft = pickHorizontalLoopPoint(loop, targetY, "left");
+    const innerRight = pickHorizontalLoopPoint(loop, targetY, "right");
+    const leftCandidates = outerLoop.filter((p) => p[0] <= innerLeft[0] + 1e-9);
+    const rightCandidates = outerLoop.filter((p) => p[0] >= innerRight[0] - 1e-9);
+    const outerLeft = pickHorizontalLoopPoint(leftCandidates.length ? leftCandidates : outerLoop, targetY, "right");
+    const outerRight = pickHorizontalLoopPoint(rightCandidates.length ? rightCandidates : outerLoop, targetY, "left");
+    appendSegment(bridges, outerLeft, innerLeft, "stroke");
+    appendSegment(bridges, innerRight, outerRight, "stroke");
+  });
+  return bridges;
 }
 
 function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xScale: number, lineWidth: number) {
@@ -358,8 +386,13 @@ function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xSc
       }
     }
 
-    const loop = extractLargestLoop(contour);
-    for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
+    const loops = extractAllLoops(contour);
+    const outerLoop = loops[0] ?? [];
+    const innerLoops = loops.slice(1);
+    loops.forEach((loop) => {
+      for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
+    });
+    buildInnerLoopBridges(outerLoop, innerLoops).forEach((seg) => all.push(seg));
   });
 
   return all;
@@ -368,6 +401,7 @@ function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xSc
 type GlyphBuild = {
   segments: TypedSegment[];
   outerLoop: Point[];
+  innerLoops: Point[][];
   sourcePoints: Point[];
   bbox: { minX: number; maxX: number; minY: number; maxY: number };
 };
@@ -376,7 +410,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
   const centerlines = buildGlyphCenterlines(ch, x0, y0, cell, xScale);
   const sourcePoints = glyphSourcePoints(ch, x0, y0, cell, xScale);
   if (!centerlines.length || !sourcePoints.length) {
-    return { segments: [], outerLoop: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
+    return { segments: [], outerLoop: [], innerLoops: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
   }
 
   const points = centerlines.flatMap(([a, b]) => [a, b]);
@@ -388,6 +422,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
   const sample = Math.max(0.12, lineWidth / 3);
   const all: TypedSegment[] = [];
   let outerLoop: Point[] = [];
+  let innerLoops: Point[][] = [];
 
   radii.forEach((radius, idx) => {
     const pad = radius + sample * 2;
@@ -416,12 +451,18 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
       if (topEmpty) contour.push([[xAt(gx + 1), yAt(gy + 1)], [xAt(gx), yAt(gy + 1)], "stroke"]);
       if (leftEmpty) contour.push([[xAt(gx), yAt(gy + 1)], [xAt(gx), yAt(gy)], "stroke"]);
     }
-    const loop = extractLargestLoop(contour);
-    if (idx === radii.length - 1) outerLoop = loop;
-    for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
-  });
+        const loops = extractAllLoops(contour);
+        if (idx === radii.length - 1) {
+          outerLoop = loops[0] ?? [];
+          innerLoops = loops.slice(1);
+        }
+        loops.forEach((loop) => {
+          for (let i = 0; i < loop.length - 1; i++) appendSegment(all, loop[i], loop[i + 1], "stroke");
+        });
+        if (idx === radii.length - 1) buildInnerLoopBridges(outerLoop, innerLoops).forEach((seg) => all.push(seg));
+    });
 
-  return { segments: all, outerLoop, sourcePoints, bbox: { minX, maxX, minY, maxY } };
+  return { segments: all, outerLoop, innerLoops, sourcePoints, bbox: { minX, maxX, minY, maxY } };
 }
 
 function nearestLoopPoint(loop: Point[], target: Point) {

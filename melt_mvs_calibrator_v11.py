@@ -1200,14 +1200,20 @@ def _convex_hull(points):
     return lower[:-1] + upper[:-1]
 
 
-def _extract_largest_loop(segs):
+def _polygon_area(loop):
+    area = 0.0
+    for p0, p1 in zip(loop[:-1], loop[1:]):
+        area += p0[0] * p1[1] - p1[0] * p0[1]
+    return area
+
+
+def _extract_all_loops(segs):
     outgoing = {}
     for a, b, _ in segs:
         outgoing.setdefault(_point_key(a), []).append((a, b))
 
     visited = set()
-    best_loop = []
-    best_area = 0.0
+    loops = []
 
     for a, b, _ in segs:
         edge_id = (_point_key(a), _point_key(b))
@@ -1235,14 +1241,33 @@ def _extract_largest_loop(segs):
             loop.append(cur)
 
         if len(loop) >= 4:
-            area = 0.0
-            for p0, p1 in zip(loop[:-1], loop[1:]):
-                area += p0[0] * p1[1] - p1[0] * p0[1]
-            if abs(area) > abs(best_area):
-                best_area = area
-                best_loop = loop
+            loops.append(loop)
 
-    return best_loop
+    return sorted(loops, key=lambda loop: abs(_polygon_area(loop)), reverse=True)
+
+
+def _pick_horizontal_loop_point(loop, target_y, side):
+    if side == "left":
+        return min(loop, key=lambda p: (abs(p[1] - target_y), p[0]))
+    return min(loop, key=lambda p: (abs(p[1] - target_y), -p[0]))
+
+
+def _build_inner_loop_bridges(outer_loop, inner_loops):
+    bridges = []
+    if not outer_loop or not inner_loops:
+        return bridges
+    for loop in inner_loops:
+        ys = [p[1] for p in loop]
+        target_y = (min(ys) + max(ys)) / 2.0
+        inner_left = _pick_horizontal_loop_point(loop, target_y, "left")
+        inner_right = _pick_horizontal_loop_point(loop, target_y, "right")
+        left_candidates = [p for p in outer_loop if p[0] <= inner_left[0] + 1e-9]
+        right_candidates = [p for p in outer_loop if p[0] >= inner_right[0] - 1e-9]
+        outer_left = _pick_horizontal_loop_point(left_candidates if left_candidates else outer_loop, target_y, "right")
+        outer_right = _pick_horizontal_loop_point(right_candidates if right_candidates else outer_loop, target_y, "left")
+        _append_segment(bridges, outer_left, inner_left, "stroke")
+        _append_segment(bridges, inner_right, outer_right, "stroke")
+    return bridges
 
 
 def _build_glyph_outer_contours(ch, x0, y0, cell, x_scale, line_width):
@@ -1298,9 +1323,13 @@ def _build_glyph_outer_contours(ch, x0, y0, cell, x_scale, line_width):
                 if left_empty:
                     contour.append(((x_at(gx), y_at(gy + 1)), (x_at(gx), y_at(gy)), "stroke"))
 
-        loop = _extract_largest_loop(contour)
-        for a, b in zip(loop[:-1], loop[1:]):
-            _append_segment(all_segments, a, b, "stroke")
+        loops = _extract_all_loops(contour)
+        outer_loop = loops[0] if loops else []
+        inner_loops = loops[1:]
+        for loop in loops:
+            for a, b in zip(loop[:-1], loop[1:]):
+                _append_segment(all_segments, a, b, "stroke")
+        all_segments.extend(_build_inner_loop_bridges(outer_loop, inner_loops))
 
     return all_segments
 
@@ -1312,6 +1341,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
         return {
             "segments": [],
             "outer_loop": [],
+            "inner_loops": [],
             "source_points": source_points,
             "bbox": {"min_x": x0, "max_x": x0, "min_y": y0, "max_y": y0},
         }
@@ -1325,6 +1355,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
     sample = max(0.12, line_width / 3.0)
     all_segments = []
     outer_loop = []
+    inner_loops = []
 
     for idx, radius in enumerate(radii):
         pad = radius + sample * 2.0
@@ -1364,15 +1395,20 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
                 if left_empty:
                     contour.append(((x_at(gx), y_at(gy + 1)), (x_at(gx), y_at(gy)), "stroke"))
 
-        loop = _extract_largest_loop(contour)
+        loops = _extract_all_loops(contour)
         if idx == len(radii) - 1:
-            outer_loop = loop
-        for a, b in zip(loop[:-1], loop[1:]):
-            _append_segment(all_segments, a, b, "stroke")
+            outer_loop = loops[0] if loops else []
+            inner_loops = loops[1:]
+        for loop in loops:
+            for a, b in zip(loop[:-1], loop[1:]):
+                _append_segment(all_segments, a, b, "stroke")
+        if idx == len(radii) - 1:
+            all_segments.extend(_build_inner_loop_bridges(outer_loop, inner_loops))
 
     return {
         "segments": all_segments,
         "outer_loop": outer_loop,
+        "inner_loops": inner_loops,
         "source_points": source_points,
         "bbox": {"min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y},
     }
