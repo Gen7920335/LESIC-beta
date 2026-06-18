@@ -1271,7 +1271,7 @@ def _build_inner_loop_bridges(outer_loop, inner_loops):
 
 
 def _build_detached_glyph_spine(ch, loops):
-    if ch not in {":", ".", "°"}:
+    if ch not in {",", "•"}:
         return []
     points = [p for loop in loops for p in loop]
     if not points:
@@ -1582,6 +1582,20 @@ def _build_interline_rails(lines_glyphs, cell):
                 continue
             x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
             _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, upper_rail_y), "connector")
+    last_line = [g for g in lines_glyphs[-1] if g["outer_loop"]] if lines_glyphs else []
+    if last_line:
+        last_pts = [p for g in last_line for p in g["outer_loop"]]
+        last_min_x = min(p[0] for p in last_pts)
+        last_max_x = max(p[0] for p in last_pts)
+        last_bottom_y = min(p[1] for p in last_pts)
+        eps = max(0.02, cell * 0.03)
+        bottom_rail_y = last_bottom_y - eps
+        _append_segment(segs, (last_min_x, bottom_rail_y), (last_max_x, bottom_rail_y), "connector")
+        for g in last_line:
+            if g.get("char") not in punctuation_chars:
+                continue
+            x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
+            _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, bottom_rail_y), "connector")
     return segs
 
 

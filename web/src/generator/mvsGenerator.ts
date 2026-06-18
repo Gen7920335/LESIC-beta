@@ -340,7 +340,7 @@ function buildInnerLoopBridges(outerLoop: Point[], innerLoops: Point[][]): Typed
 }
 
 function buildDetachedGlyphSpine(ch: string, loops: Point[][]): TypedSegment[] {
-  if (![":", ".", "°"].includes(ch)) return [];
+  if (![",", "•"].includes(ch)) return [];
   const points = loops.flatMap((loop) => loop);
   if (!points.length) return [];
   const minX = Math.min(...points.map((p) => p[0]));
@@ -597,6 +597,21 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
       if (!punctuationChars.has(g.char)) return;
       const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
       appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, upperRailY], "connector");
+    });
+  }
+  const lastLine = linesGlyphs[linesGlyphs.length - 1]?.filter((g) => g.outerLoop.length) ?? [];
+  if (lastLine.length) {
+    const lastPts = lastLine.flatMap((g) => g.outerLoop);
+    const lastMinX = Math.min(...lastPts.map((p) => p[0]));
+    const lastMaxX = Math.max(...lastPts.map((p) => p[0]));
+    const lastBottomY = Math.min(...lastPts.map((p) => p[1]));
+    const eps = Math.max(0.02, cell * 0.03);
+    const bottomRailY = lastBottomY - eps;
+    appendSegment(segs, [lastMinX, bottomRailY], [lastMaxX, bottomRailY], "connector");
+    lastLine.forEach((g) => {
+      if (!punctuationChars.has(g.char)) return;
+      const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
+      appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, bottomRailY], "connector");
     });
   }
   return segs;
