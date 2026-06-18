@@ -1576,12 +1576,12 @@ def _build_interline_rails(lines_glyphs, cell):
             if g.get("char") not in punctuation_chars:
                 continue
             x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            _append_segment(segs, (x_center, g["bbox"]["max_y"]), (x_center, upper_rail_y), "connector")
+            _append_segment(segs, (x_center, g["bbox"]["max_y"]), (x_center, lower_rail_y), "connector")
         for g in upper:
             if g.get("char") not in punctuation_chars:
                 continue
             x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
-            _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, lower_rail_y), "connector")
+            _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, upper_rail_y), "connector")
     return segs
 
 

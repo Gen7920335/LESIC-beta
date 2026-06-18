@@ -591,12 +591,12 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
     lower.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
       const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      appendSegment(segs, [xCenter, g.bbox.maxY], [xCenter, upperRailY], "connector");
+      appendSegment(segs, [xCenter, g.bbox.maxY], [xCenter, lowerRailY], "connector");
     });
     upper.forEach((g) => {
       if (!punctuationChars.has(g.char)) return;
       const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
-      appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, lowerRailY], "connector");
+      appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, upperRailY], "connector");
     });
   }
   return segs;
