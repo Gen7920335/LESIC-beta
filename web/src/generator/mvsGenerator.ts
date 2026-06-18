@@ -412,6 +412,7 @@ function buildGlyphOutline(ch: string, x0: number, y0: number, cell: number, xSc
 }
 
 type GlyphBuild = {
+  char: string;
   segments: TypedSegment[];
   outerLoop: Point[];
   innerLoops: Point[][];
@@ -423,7 +424,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
   const centerlines = buildGlyphCenterlines(ch, x0, y0, cell, xScale);
   const sourcePoints = glyphSourcePoints(ch, x0, y0, cell, xScale);
   if (!centerlines.length || !sourcePoints.length) {
-    return { segments: [], outerLoop: [], innerLoops: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
+    return { char: ch, segments: [], outerLoop: [], innerLoops: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
   }
 
   const points = centerlines.flatMap(([a, b]) => [a, b]);
@@ -476,7 +477,7 @@ function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xS
         if (idx === radii.length - 1) buildDetachedGlyphSpine(ch, loops).forEach((seg) => all.push(seg));
     });
 
-  return { segments: all, outerLoop, innerLoops, sourcePoints, bbox: { minX, maxX, minY, maxY } };
+  return { char: ch, segments: all, outerLoop, innerLoops, sourcePoints, bbox: { minX, maxX, minY, maxY } };
 }
 
 function nearestLoopPoint(loop: Point[], target: Point) {
@@ -569,6 +570,7 @@ function connectAdjacentGlyphs(left: GlyphBuild, right: GlyphBuild, cell: number
 
 function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
   const segs: TypedSegment[] = [];
+  const punctuationChars = new Set([":", ".", "°"]);
   for (let i = 0; i < linesGlyphs.length - 1; i++) {
     const upper = linesGlyphs[i].filter((g) => g.outerLoop.length);
     const lower = linesGlyphs[i + 1].filter((g) => g.outerLoop.length);
@@ -582,8 +584,20 @@ function buildInterlineRails(linesGlyphs: GlyphBuild[][], cell: number) {
     const lowerMaxX = Math.max(...lowerPts.map((p) => p[0]));
     const lowerTopY = Math.max(...lowerPts.map((p) => p[1]));
     const eps = Math.max(0.02, cell * 0.03);
-    appendSegment(segs, [upperMinX, upperBottomY - eps], [upperMaxX, upperBottomY - eps], "connector");
-    appendSegment(segs, [lowerMinX, lowerTopY + eps], [lowerMaxX, lowerTopY + eps], "connector");
+    const upperRailY = upperBottomY - eps;
+    const lowerRailY = lowerTopY + eps;
+    appendSegment(segs, [upperMinX, upperRailY], [upperMaxX, upperRailY], "connector");
+    appendSegment(segs, [lowerMinX, lowerRailY], [lowerMaxX, lowerRailY], "connector");
+    lower.forEach((g) => {
+      if (!punctuationChars.has(g.char)) return;
+      const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
+      appendSegment(segs, [xCenter, g.bbox.maxY], [xCenter, upperRailY], "connector");
+    });
+    upper.forEach((g) => {
+      if (!punctuationChars.has(g.char)) return;
+      const xCenter = (g.bbox.minX + g.bbox.maxX) / 2;
+      appendSegment(segs, [xCenter, g.bbox.minY], [xCenter, lowerRailY], "connector");
+    });
   }
   return segs;
 }

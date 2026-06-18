@@ -1356,6 +1356,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
     source_points = _glyph_source_points(ch, x0, y0, cell, x_scale)
     if not centerlines or not source_points:
         return {
+            "char": ch,
             "segments": [],
             "outer_loop": [],
             "inner_loops": [],
@@ -1424,6 +1425,7 @@ def _build_glyph_geometry(ch, x0, y0, cell, x_scale, line_width):
             all_segments.extend(_build_detached_glyph_spine(ch, loops))
 
     return {
+        "char": ch,
         "segments": all_segments,
         "outer_loop": outer_loop,
         "inner_loops": inner_loops,
@@ -1551,6 +1553,7 @@ def _connect_adjacent_glyphs(left_geom, right_geom, cell):
 
 def _build_interline_rails(lines_glyphs, cell):
     segs = []
+    punctuation_chars = {":", ".", "°"}
     for upper_line, lower_line in zip(lines_glyphs[:-1], lines_glyphs[1:]):
         upper = [g for g in upper_line if g["outer_loop"]]
         lower = [g for g in lower_line if g["outer_loop"]]
@@ -1565,8 +1568,20 @@ def _build_interline_rails(lines_glyphs, cell):
         lower_max_x = max(p[0] for p in lower_pts)
         lower_top_y = max(p[1] for p in lower_pts)
         eps = max(0.02, cell * 0.03)
-        _append_segment(segs, (upper_min_x, upper_bottom_y - eps), (upper_max_x, upper_bottom_y - eps), "connector")
-        _append_segment(segs, (lower_min_x, lower_top_y + eps), (lower_max_x, lower_top_y + eps), "connector")
+        upper_rail_y = upper_bottom_y - eps
+        lower_rail_y = lower_top_y + eps
+        _append_segment(segs, (upper_min_x, upper_rail_y), (upper_max_x, upper_rail_y), "connector")
+        _append_segment(segs, (lower_min_x, lower_rail_y), (lower_max_x, lower_rail_y), "connector")
+        for g in lower:
+            if g.get("char") not in punctuation_chars:
+                continue
+            x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
+            _append_segment(segs, (x_center, g["bbox"]["max_y"]), (x_center, upper_rail_y), "connector")
+        for g in upper:
+            if g.get("char") not in punctuation_chars:
+                continue
+            x_center = (g["bbox"]["min_x"] + g["bbox"]["max_x"]) / 2.0
+            _append_segment(segs, (x_center, g["bbox"]["min_y"]), (x_center, lower_rail_y), "connector")
     return segs
 
 
