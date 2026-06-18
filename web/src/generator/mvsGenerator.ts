@@ -87,7 +87,7 @@ const LABEL_ADVANCE_UNITS = 6.8;
 const LABEL_GLYPH_WIDTH_UNITS = 5.0;
 const LABEL_LETTER_GAP_RATIO = 0.4;
 const LABEL_TEXT_WIDTH = 1.0;
-const LABEL_OUTLINE_WIDTH = 0.25;
+export const LABEL_OUTLINE_WIDTH = 0.25;
 const LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2 + LABEL_OUTLINE_WIDTH / 2;
 const LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH;
 const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", ",", "•"]);
@@ -994,8 +994,9 @@ export function makeGcode(cfg: GeneratorConfig) {
   if (cfg.label) {
     emitTemperatureSet(lines, cfg, cfg.start_temp, "min");
     const typed = buildLabelSegments(cfg);
-    const labelWidth = LABEL_OUTLINE_WIDTH;
-    lines.push("", "; ---------- bottom inner label ----------", "; label_toolpath=glyph_outer_double_contour_plus_convex_hull", "; label_visual_layout=three_line_default", "; label_path_order=line1_LTR_line2_LTR_line3_LTR", "; label_width_mode=fixed_label_width", `; label_line_width=${fmt(labelWidth)}`, "; label_inner_contours_per_glyph=2", "; label_outer_hull_passes=2", "; label_inner_contour_gap_mm=0", `; label_layout=${cfg.label_layout}`, `; label_lines=${labelLines.join(" | ")}`, `; ring_mvs_values=${ringMvsLabelValues(cfg).map((v) => fmt(v)).join(",")}`, `; label_segments_total=${typed.length}`, `; label_segments_stroke=${typed.filter((s) => s[2] === "stroke").length}`, `; label_segments_connector=${typed.filter((s) => s[2] === "connector").length}`);
+    const labelStrokeWidth = LABEL_OUTLINE_WIDTH;
+    const labelConnectorWidth = Math.max(0, cfg.label_connector_width);
+    lines.push("", "; ---------- bottom inner label ----------", "; label_toolpath=glyph_outer_double_contour_plus_convex_hull", "; label_visual_layout=three_line_default", "; label_path_order=line1_LTR_line2_LTR_line3_LTR", "; label_width_mode=stroke_vs_connector", `; label_stroke_width=${fmt(labelStrokeWidth)}`, `; label_connector_width=${fmt(labelConnectorWidth)}`, "; label_inner_contours_per_glyph=2", "; label_outer_hull_passes=2", "; label_inner_contour_gap_mm=0", `; label_layout=${cfg.label_layout}`, `; label_lines=${labelLines.join(" | ")}`, `; ring_mvs_values=${ringMvsLabelValues(cfg).map((v) => fmt(v)).join(",")}`, `; label_segments_total=${typed.length}`, `; label_segments_stroke=${typed.filter((s) => s[2] === "stroke").length}`, `; label_segments_connector=${typed.filter((s) => s[2] === "connector").length}`);
     if (typed.length) {
       const start = typed[0][0];
       lines.push(`G0 Z${fmt(cfg.layer_height)} F${fmt(cfg.z_travel_speed * 60, 1)}`);
@@ -1006,11 +1007,12 @@ export function makeGcode(cfg: GeneratorConfig) {
         if (dist(cursor, p0) > 1e-9) {
           lines.push(`G0 X${fmt(p0[0])} Y${fmt(p0[1])} F${fmt(cfg.travel_speed * 60, 1)} ; label stroke jump`);
         }
-        const e = (dist(p0, p1) * labelWidth * cfg.layer_height / fa) * cfg.extrusion_multiplier;
+        const width = kind === "connector" ? labelConnectorWidth : labelStrokeWidth;
+        const e = (dist(p0, p1) * width * cfg.layer_height / fa) * cfg.extrusion_multiplier;
         eTotal += e;
         labelEnd = p1;
         cursor = p1;
-        lines.push(`G1 X${fmt(p1[0])} Y${fmt(p1[1])} E${fmt(e, 5)} F${fmt(cfg.label_speed * 60, 1)} ; label_${kind} width=${fmt(labelWidth)}`);
+        lines.push(`G1 X${fmt(p1[0])} Y${fmt(p1[1])} E${fmt(e, 5)} F${fmt(cfg.label_speed * 60, 1)} ; label_${kind} width=${fmt(width)}`);
       });
       lines.push(`; label_estimated_E_mm=${fmt(eTotal, 3)}`);
     } else {

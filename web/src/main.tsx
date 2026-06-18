@@ -9,8 +9,10 @@ import {
   GeneratorConfig,
   getPreviewData,
   inferFirmwareMode,
+  LABEL_OUTLINE_WIDTH,
   makeGcode,
   PrinterPreset,
+  SegmentKind,
 } from "./generator/mvsGenerator";
 import "./styles.css";
 
@@ -506,10 +508,10 @@ function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }
   const circlePaths = data.circleSegments.map(([a, b], i) => {
     const pa = mapPoint(a);
     const pb = mapPoint(b);
-    return <line key={i} x1={pa[0]} y1={pa[1]} x2={pb[0]} y2={pb[1]} className="circleSegment" />;
+    return <line key={i} x1={pa[0]} y1={pa[1]} x2={pb[0]} y2={pb[1]} className="circleSegment" style={{ strokeWidth: cfg.line_width }} />;
   });
   const aggregatedLabelSegments = useMemo(() => {
-    const grouped = new Map<string, { a: readonly [number, number]; b: readonly [number, number]; kind: string; count: number }>();
+    const grouped = new Map<string, { a: readonly [number, number]; b: readonly [number, number]; kind: SegmentKind; count: number }>();
     data.labelSegments.forEach(([a, b, kind]) => {
       const pa = mapPoint(a);
       const pb = mapPoint(b);
@@ -520,6 +522,10 @@ function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }
     });
     return [...grouped.values()];
   }, [data.labelSegments]);
+  const labelStrokeWidth = (kind: SegmentKind, count: number) => {
+    const baseWidth = kind === "connector" ? cfg.label_connector_width : LABEL_OUTLINE_WIDTH;
+    return Math.max(0.01, baseWidth) * Math.max(1, count);
+  };
   const labelPaths = aggregatedLabelSegments.map(({ a, b, kind, count }, i) => (
     <line
       key={i}
@@ -528,7 +534,7 @@ function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }
       x2={b[0]}
       y2={b[1]}
       className={kind}
-      style={{ strokeWidth: kind === "connector" ? `${1.1 + (count - 1) * 0.65}px` : `${0.45 + (count - 1) * 0.38}px` }}
+      style={{ strokeWidth: labelStrokeWidth(kind, count) }}
     />
   ));
   const tooLarge = data.square.x < 0 || data.square.y < 0 || data.square.x + data.square.d > data.bed.x || data.square.y + data.square.d > data.bed.y;

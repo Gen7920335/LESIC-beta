@@ -1862,7 +1862,8 @@ def emit_label(lines_out, cfg, label_lines, fa):
 
     typed_segments, info = _build_txt_shx_width_typed_segments(cfg, label_lines, char_h)
 
-    stroke_width = 0.25
+    stroke_width = LABEL_OUTLINE_WIDTH
+    connector_width = max(0.0, cfg.get("label_connector_width", 0.2))
     layer_h = cfg["layer_height"]
     stroke_count = sum(1 for _, _, k in typed_segments if k == "stroke")
     connector_count = sum(1 for _, _, k in typed_segments if k == "connector")
@@ -1873,9 +1874,10 @@ def emit_label(lines_out, cfg, label_lines, fa):
         "; label_toolpath=glyph_outer_double_contour_plus_convex_hull",
         "; label_visual_layout=three_line_default",
         "; label_path_order=line1_LTR_line2_LTR_line3_LTR",
-        "; label_path_rule=stroke_only_no_connectors",
-        "; label_width_mode=fixed_label_width",
-        f"; label_line_width={fmt(stroke_width)}",
+        "; label_path_rule=outer_contours_with_rails_and_hull",
+        "; label_width_mode=stroke_vs_connector",
+        f"; label_stroke_width={fmt(stroke_width)}",
+        f"; label_connector_width={fmt(connector_width)}",
         "; label_inner_contours_per_glyph=2",
         "; label_outer_hull_passes=2",
         "; label_inner_contour_gap_mm=0",
@@ -1905,7 +1907,8 @@ def emit_label(lines_out, cfg, label_lines, fa):
     for p0, p1, kind in typed_segments:
         if dist(cursor, p0) > 1e-9:
             lines_out.append(f"G0 X{fmt(p0[0])} Y{fmt(p0[1])} F{fmt(cfg['travel_speed']*60,1)} ; label stroke jump")
-        cross_section = stroke_width * layer_h
+        width = connector_width if kind == "connector" else stroke_width
+        cross_section = width * layer_h
         length = ((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2) ** 0.5
         if length <= 0:
             continue
@@ -1914,7 +1917,7 @@ def emit_label(lines_out, cfg, label_lines, fa):
         end_point = p1
         cursor = p1
         lines_out.append(
-            f"G1 X{fmt(p1[0])} Y{fmt(p1[1])} E{fmt(e,5)} F{fmt(cfg['label_speed']*60,1)} ; label_{kind} width={fmt(stroke_width)}"
+            f"G1 X{fmt(p1[0])} Y{fmt(p1[1])} E{fmt(e,5)} F{fmt(cfg['label_speed']*60,1)} ; label_{kind} width={fmt(width)}"
         )
 
     lines_out.append(f"; label_estimated_E_mm={fmt(e_total,3)}")
