@@ -593,10 +593,32 @@ function ringMvsLabelValues(cfg: GeneratorConfig) {
   const values: number[] = [cfg.mvs_min];
   const startMultiple = Math.ceil(cfg.mvs_min / 5) * 5;
   for (let v = startMultiple; v <= cfg.mvs_max + 1e-9; v += 5) {
-    if (Math.abs(v - cfg.mvs_min) < 1e-9) continue;
+    if (Math.abs(v - cfg.mvs_min) < 2.5) continue;
     values.push(v);
   }
   return values;
+}
+
+function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
+  const values: number[] = [];
+  const start = Math.ceil(cfg.mvs_min);
+  const end = Math.floor(cfg.mvs_max);
+  for (let v = start; v <= end; v += 1) values.push(v);
+  const radius = cfg.circle_diameter / 2;
+  const cx = cfg.square_x + radius;
+  const cy = cfg.square_y + radius;
+  const sign = cfg.clockwise ? -1 : 1;
+  const all: TypedSegment[] = [];
+
+  values.forEach((value) => {
+    const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+    const angle = cfg.zero_angle_deg + sign * 360 * t;
+    const outer = pointOnCircle(cx, cy, radius - 1.1, angle);
+    const inner = pointOnCircle(cx, cy, radius - (value % 5 === 0 ? 3.2 : 2.1), angle);
+    appendSegment(all, outer, inner, "stroke");
+  });
+
+  return all;
 }
 
 function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
@@ -659,7 +681,13 @@ export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
     linesGlyphs.push(glyphs);
     glyphs.forEach((g) => all.push(...g.segments));
   });
-  return [...all, ...buildInterlineRails(linesGlyphs, cell), ...buildHullLoops(all), ...buildRingMvsLabels(cfg)];
+  return [
+    ...all,
+    ...buildInterlineRails(linesGlyphs, cell),
+    ...buildHullLoops(all),
+    ...buildRingMvsTickSegments(cfg),
+    ...buildRingMvsLabels(cfg),
+  ];
 }
 
 function emitFirmwareMotionBlock(lines: string[], cfg: GeneratorConfig) {

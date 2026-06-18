@@ -1076,6 +1076,7 @@ def emit_label(lines_out, cfg, label_lines, fa):
         char_h = max_allowed_h
 
     typed_segments, info = _build_txt_shx_width_typed_segments(cfg, label_lines, char_h)
+    typed_segments.extend(build_ring_mvs_tick_segments(cfg))
     typed_segments.extend(build_ring_mvs_label_segments(cfg, label_lines))
 
     stroke_width = cfg.get("label_stroke_width", 0.8)
@@ -1623,10 +1624,26 @@ def ring_mvs_label_values(cfg):
     start_multiple = math.ceil(cfg["mvs_min"] / 5.0) * 5.0
     v = start_multiple
     while v <= cfg["mvs_max"] + 1e-9:
-        if abs(v - cfg["mvs_min"]) > 1e-9:
+        if abs(v - cfg["mvs_min"]) >= 2.5:
             values.append(v)
         v += 5.0
     return values
+
+
+def build_ring_mvs_tick_segments(cfg):
+    values = list(range(math.ceil(cfg["mvs_min"]), math.floor(cfg["mvs_max"]) + 1))
+    radius = cfg["circle_diameter"] / 2.0
+    cx = cfg["square_x"] + radius
+    cy = cfg["square_y"] + radius
+    sign = -1.0 if cfg["clockwise"] else 1.0
+    out = []
+    for value in values:
+        t = 0.0 if abs(cfg["mvs_max"] - cfg["mvs_min"]) < 1e-9 else (value - cfg["mvs_min"]) / (cfg["mvs_max"] - cfg["mvs_min"])
+        angle = cfg["zero_angle_deg"] + sign * 360.0 * t
+        outer = point_on_circle(cx, cy, radius - 1.1, angle)
+        inner = point_on_circle(cx, cy, radius - (3.2 if value % 5 == 0 else 2.1), angle)
+        out.append((outer, inner, "stroke"))
+    return out
 
 
 def emit_label(lines_out, cfg, label_lines, fa):
