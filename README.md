@@ -115,6 +115,11 @@ OrcaSlicer 기준 권장 설정:
 - `Top interface pattern angle`: `22.5`
 - `Top interface layers`: `4`
 
+서포트 재질 할당은 다음처럼 사용하는 것을 권장합니다.
+
+- 출력물, 서포트 재질: 필라멘트의 원래 프로파일
+- 서포트 인터페이스 재질: LESIC 캘리브레이션으로 찾은 저온 프로파일
+
 ---
 
 ## Quick Start
