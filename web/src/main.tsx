@@ -14,6 +14,7 @@ import {
   PrinterPreset,
   SegmentKind,
 } from "./generator/mvsGenerator";
+import { bambu3mfFileName, makeBambu3mfBlob, supportsBuiltInBambu3mf } from "./generator/bambu3mf";
 import "./styles.css";
 
 const presets = presetsJson as Record<string, PrinterPreset>;
@@ -43,6 +44,7 @@ const translations = {
     unknownWarning: "Acceleration/speed limits may not be unlocked.",
     readyLog: "Ready. Press Preview or Generate G-code.",
     generatedLog: (name: string) => `Generated G-code: ${name}`,
+    generated3mfLog: (name: string) => `Generated Bambu 3MF: ${name}`,
     previewLogBands: (bands: number) => `Preview: computed bands = ${bands}`,
     previewLogParsed: "Preview parsed from generated G-code.",
     outputPrompt: "Output G-code file name",
@@ -79,6 +81,7 @@ const translations = {
     presetPlaceholder: "preset",
     autoPlaceholder: "auto",
     generate: "Generate G-code",
+    generateBambu3mf: "Bambu 3MF",
     preview: "Preview",
     chooseOutput: "Choose output",
     showGcode: "Show G-code",
@@ -95,6 +98,7 @@ const translations = {
     unknownWarning: "가속도/속도 제한이 해제되지 않았을 수 있습니다.",
     readyLog: "준비 완료. Preview 또는 Generate G-code를 누르세요.",
     generatedLog: (name: string) => `G-code 생성: ${name}`,
+    generated3mfLog: (name: string) => `Bambu 3MF 생성: ${name}`,
     previewLogBands: (bands: number) => `Preview: 계산된 밴드 수 = ${bands}`,
     previewLogParsed: "Preview가 생성된 G-code 기준으로 갱신되었습니다.",
     outputPrompt: "출력 G-code 파일명",
@@ -131,6 +135,7 @@ const translations = {
     presetPlaceholder: "preset",
     autoPlaceholder: "auto",
     generate: "G-code 생성",
+    generateBambu3mf: "Bambu 3MF",
     preview: "Preview",
     chooseOutput: "출력 선택",
     showGcode: "G-code 보기",
@@ -306,6 +311,26 @@ function App() {
     setLogs((prev) => [...prev, t.generatedLog(a.download)]);
   }
 
+  async function generateBambu3mf() {
+    if (!cfg || error || !supportsBuiltInBambu3mf(cfg)) return;
+    try {
+      const gcode = makeGcode(cfg);
+      const blob = await makeBambu3mfBlob(cfg, gcode);
+      const filename = bambu3mfFileName(cfg.output);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      setGeneratedGcode(gcode);
+      setLogs((prev) => [...prev, t.generated3mfLog(filename)]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLogs((prev) => [...prev, `Bambu 3MF export failed: ${message}`]);
+    }
+  }
+
   function preview() {
     if (!cfg || error) return;
     setShowGcode(false);
@@ -405,6 +430,7 @@ function App() {
         <section className="workspace">
           <div className="toolbar">
             <button type="button" className="generate" onClick={generate} disabled={!cfg || !!error}>{t.generate}</button>
+            <button type="button" className="previewButton" onClick={generateBambu3mf} disabled={!cfg || !!error || !supportsBuiltInBambu3mf(cfg)}>{t.generateBambu3mf}</button>
             <button type="button" className="previewButton" onClick={preview}>{t.preview}</button>
             <button type="button" onClick={chooseOutput}>{t.chooseOutput}</button>
             <button type="button" onClick={() => setShowGcode((v) => !v)}>{showGcode ? t.hideGcode : t.showGcode}</button>
