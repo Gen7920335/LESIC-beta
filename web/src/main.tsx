@@ -60,25 +60,49 @@ const translations = {
     label: "Label",
     firmwareMotion: "Firmware Motion",
     outputDesc: "Generated G-code download file name.",
+    outputLabel: "Output file",
     printerPresetDesc: "Printer preset from printer_presets.json.",
+    printerPresetLabel: "Printer preset",
     firmwareModeDesc: "Auto-inferred from preset, but can be overridden.",
+    firmwareModeLabel: "Firmware",
     filamentNameDesc: "Filament name printed in the bottom label.",
+    filamentNameLabel: "Filament name",
     startTempDesc: "Starting nozzle temperature.",
+    startTempLabel: "Start temp",
     endTempDesc: "Ending nozzle temperature; bands are computed automatically.",
+    endTempLabel: "End temp",
     tempStepDesc: "Temperature drop per band.",
+    tempStepLabel: "Temp band step",
     layersPerBandDesc: "Layers per temperature band.",
+    layersPerBandLabel: "Layers per temp band",
     bedTempDesc: "Standalone bed temperature.",
+    bedTempLabel: "Bed temp",
     layerHeightDesc: "Automatically set to 60% of nozzle diameter.",
+    layerHeightLabel: "Layer height",
     mvsMinDesc: "Starting MVS value, mm3/s.",
+    mvsMinLabel: "Min MVS",
     mvsMaxDesc: "Maximum MVS value, mm3/s.",
+    mvsMaxLabel: "Max MVS",
     arcSegmentsDesc: "Segments per circle.",
+    arcSegmentsLabel: "Arc segments",
     bedXDesc: "Empty uses the preset bed X.",
+    bedXLabel: "Bed X",
     bedYDesc: "Empty uses the preset bed Y.",
+    bedYLabel: "Bed Y",
     placementDesc: "Empty uses automatic placement.",
+    squareXLabel: "Start X",
+    squareYLabel: "Start Y",
+    circleDiameterLabel: "Circle diameter",
     labelHeightDesc: "Empty uses auto-fit.",
+    labelEnabledDesc: "Enable or disable the bottom label.",
+    labelEnabledLabel: "Bottom label",
+    labelHeightLabel: "Label height",
     motionAccelDesc: "Requested acceleration.",
+    motionAccelLabel: "Acceleration",
     motionVelocityDesc: "Requested XY velocity limit.",
+    motionVelocityLabel: "Velocity limit",
     motionJerkDesc: "Marlin classic jerk hint.",
+    motionJerkLabel: "Jerk",
     presetPlaceholder: "preset",
     autoPlaceholder: "auto",
     generate: "Generate G-code",
@@ -95,9 +119,10 @@ const translations = {
     loadLesicFile: "Load LESIC file",
     loadConfirm: "Loading this file will replace all current input variables. Continue?",
     loadedFileLog: (name: string) => `Loaded LESIC settings: ${name}`,
-    loadFileError: (message: string) => `LESIC file load failed: ${message}`,
+    loadFileError: "로드한 파일은 LESIC으로 생성한 캘리브레이션 모델이 아니거나 손상되어 읽을수 없습니다!",
     labelEnabled: "label",
     nozzleSizeDesc: "Choose one supported nozzle size. Circular line width is set automatically.",
+    nozzleSizeLabel: "Nozzle size",
   },
   ko: {
     unknownWarning: "가속도/속도 제한이 해제되지 않았을 수 있습니다.",
@@ -153,7 +178,7 @@ const translations = {
     loadLesicFile: "LESIC 파일 불러오기",
     loadConfirm: "파일을 불러오면 현재 입력돼있는 변수가 모두 사라집니다. 정말 실행하겠습니까?",
     loadedFileLog: (name: string) => `LESIC 설정 불러옴: ${name}`,
-    loadFileError: (message: string) => `LESIC 파일 불러오기 실패: ${message}`,
+    loadFileError: "로드한 파일은 LESIC으로 생성한 캘리브레이션 모델이 아니거나 손상되어 읽을수 없습니다!",
     labelEnabled: "라벨 사용",
     nozzleSizeDesc: "지원 노즐 구경 중 하나를 선택합니다. 원형 테스트 선폭은 자동으로 설정됩니다.",
   },
@@ -250,14 +275,77 @@ function booleanFromMetadata(data: Record<string, unknown>, key: string, fallbac
   return fallback;
 }
 
+const REQUIRED_STRING_METADATA_KEYS = ["output", "printer_preset", "printer_name", "firmware_mode", "filament_name"] as const;
+const REQUIRED_NUMBER_METADATA_KEYS = [
+  "nozzle_size",
+  "start_temp",
+  "end_temp",
+  "temp_step",
+  "layers_per_band",
+  "bed_temp",
+  "temp_wait_tolerance",
+  "layer_height",
+  "mvs_min",
+  "mvs_max",
+  "arc_segments",
+  "bed_x",
+  "bed_y",
+  "square_x",
+  "square_y",
+  "circle_diameter",
+  "label_x_scale",
+  "label_stroke_width",
+  "label_connector_width",
+  "label_speed",
+  "travel_speed",
+  "z_travel_speed",
+  "min_xy_speed",
+  "max_xy_speed",
+  "retract",
+  "extrusion_multiplier",
+  "motion_accel",
+  "motion_velocity",
+  "motion_minimum_cruise_ratio",
+  "motion_square_corner_velocity",
+  "motion_jerk",
+] as const;
+
+function isFiniteMetadataNumber(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string" && value.trim() !== "") return Number.isFinite(Number(value));
+  return false;
+}
+
+function validateLesicMetadata(data: Record<string, unknown>) {
+  if (data.app !== "LESIC" || data.metadata_version !== 1) throw new Error("Invalid LESIC metadata.");
+  for (const key of REQUIRED_STRING_METADATA_KEYS) {
+    if (typeof data[key] !== "string" || data[key].trim() === "") throw new Error(`Missing LESIC metadata: ${key}`);
+  }
+  for (const key of REQUIRED_NUMBER_METADATA_KEYS) {
+    if (!isFiniteMetadataNumber(data[key])) throw new Error(`Missing LESIC metadata: ${key}`);
+  }
+  if (!presets[stringFromMetadata(data, "printer_preset")]) throw new Error("Unknown LESIC printer preset.");
+  if (!isFirmwareMode(data.firmware_mode)) throw new Error("Invalid LESIC firmware mode.");
+  if (typeof data.label !== "boolean") throw new Error("Missing LESIC metadata: label");
+  if (data.label_height != null && !isFiniteMetadataNumber(data.label_height)) throw new Error("Invalid LESIC label height.");
+}
+
 function parseLesicMetadata(gcode: string) {
   const line = gcode.split(/\r?\n/).find((item) => item.startsWith(LESIC_METADATA_JSON_PREFIX));
   if (!line) throw new Error("LESIC metadata block was not found.");
-  const data = JSON.parse(line.slice(LESIC_METADATA_JSON_PREFIX.length));
-  if (!data || typeof data !== "object" || data.app !== "LESIC") {
+  let data: unknown;
+  try {
+    data = JSON.parse(line.slice(LESIC_METADATA_JSON_PREFIX.length));
+  } catch {
     throw new Error("Invalid LESIC metadata.");
   }
-  return data as Record<string, unknown>;
+  if (!data || typeof data !== "object") {
+    throw new Error("Invalid LESIC metadata.");
+  }
+  const metadata = data as Record<string, unknown>;
+  if (metadata.app !== "LESIC") throw new Error("Invalid LESIC metadata.");
+  validateLesicMetadata(metadata);
+  return metadata;
 }
 
 function draftFromMetadata(data: Record<string, unknown>) {
@@ -340,7 +428,7 @@ const initialDraft: Draft = {
   max_xy_speed: 0,
   retract: 0,
   extrusion_multiplier: 1,
-  motion_accel: 8000,
+  motion_accel: 3000,
   motion_velocity: 300,
   motion_minimum_cruise_ratio: 0,
   motion_square_corner_velocity: 10,
@@ -396,6 +484,60 @@ function App() {
   const [generatedGcode, setGeneratedGcode] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = translations[language];
+  const uiLabels = language === "ko"
+    ? {
+        output: "생성 파일명",
+        printerPreset: "기종 프리셋",
+        firmwareMode: "펌웨어",
+        nozzleSize: "노즐 구경",
+        filamentName: "필라멘트 이름",
+        startTemp: "시작 온도",
+        endTemp: "종료 온도",
+        tempStep: "온도 구간 간격",
+        layersPerBand: "온도 구간별 레이어 수",
+        bedTemp: "베드 온도",
+        layerHeight: "적층 높이",
+        mvsMin: "최소 MVS",
+        mvsMax: "최대 MVS",
+        arcSegments: "원 분할 수",
+        bedX: "베드 X",
+        bedY: "베드 Y",
+        squareX: "시작 X 위치",
+        squareY: "시작 Y 위치",
+        circleDiameter: "원 지름",
+        labelEnabled: "바닥 라벨",
+        labelHeight: "라벨 높이",
+        motionAccel: "가속도",
+        motionVelocity: "속도 제한",
+        motionJerk: "저크",
+      }
+    : {
+        output: "Output file",
+        printerPreset: "Printer preset",
+        firmwareMode: "Firmware",
+        nozzleSize: "Nozzle size",
+        filamentName: "Filament name",
+        startTemp: "Start temp",
+        endTemp: "End temp",
+        tempStep: "Temp band step",
+        layersPerBand: "Layers per temp band",
+        bedTemp: "Bed temp",
+        layerHeight: "Layer height",
+        mvsMin: "Min MVS",
+        mvsMax: "Max MVS",
+        arcSegments: "Arc segments",
+        bedX: "Bed X",
+        bedY: "Bed Y",
+        squareX: "Start X",
+        squareY: "Start Y",
+        circleDiameter: "Circle diameter",
+        labelEnabled: "Bottom label",
+        labelHeight: "Label height",
+        motionAccel: "Acceleration",
+        motionVelocity: "Velocity limit",
+        motionJerk: "Jerk",
+      };
+  const labelEnabledTooltip = language === "ko" ? "바닥 라벨 생성 여부를 설정합니다." : "Enable or disable the bottom label.";
   const [logs, setLogs] = useState<string[]>([translations.ko.readyLog]);
   const { cfg, error } = useMemo(() => {
     try {
@@ -477,8 +619,7 @@ function App() {
       setShowGcode(false);
       setLogs((prev) => [...prev, t.loadedFileLog(file.name)]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setLogs((prev) => [...prev, t.loadFileError(message)]);
+      setLogs((prev) => [...prev, t.loadFileError]);
     }
   }
 
@@ -515,14 +656,14 @@ function App() {
       <div className="shell">
         <section className="controls">
           <Fieldset title={t.output}>
-            <TextField label="output" description={t.outputDesc} value={draft.output} onChange={(v) => update("output", v)} />
+            <TextField label={uiLabels.output} description={t.outputDesc} value={draft.output} onChange={(v) => update("output", v)} />
           </Fieldset>
 
           <Fieldset title={t.printer}>
-            <Select label="printer_preset" description={t.printerPresetDesc} value={draft.printer_preset} options={presetNames} onChange={selectPreset} />
-            <Select label="firmware_mode" description={t.firmwareModeDesc} value={draft.firmware_mode} options={["klipper", "marlin", "bambu", "unknown"]} onChange={(v) => update("firmware_mode", v as FirmwareMode)} />
+            <Select label={uiLabels.printerPreset} description={t.printerPresetDesc} value={draft.printer_preset} options={presetNames} onChange={selectPreset} />
+            <Select label={uiLabels.firmwareMode} description={t.firmwareModeDesc} value={draft.firmware_mode} options={["klipper", "marlin", "bambu", "unknown"]} onChange={(v) => update("firmware_mode", v as FirmwareMode)} />
             <Select
-              label="nozzle_size"
+              label={uiLabels.nozzleSize}
               description={t.nozzleSizeDesc}
               value={String(draft.nozzle_size)}
               options={nozzleOptions.map((v) => ({ value: String(v), label: `${fmt(v, 2)} mm` }))}
@@ -535,44 +676,44 @@ function App() {
                 }));
               }}
             />
-            <TextField label="filament_name" description={t.filamentNameDesc} value={draft.filament_name} onChange={(v) => update("filament_name", v)} />
+            <TextField label={uiLabels.filamentName} description={t.filamentNameDesc} value={draft.filament_name} onChange={(v) => update("filament_name", v)} />
           </Fieldset>
 
           <Fieldset title={t.temperature}>
-            <NumberField label="start_temp" description={t.startTempDesc} value={draft.start_temp} onChange={(v) => update("start_temp", v)} />
-            <NumberField label="end_temp" description={t.endTempDesc} value={draft.end_temp} onChange={(v) => update("end_temp", v)} />
-            <NumberField label="temp_step" description={t.tempStepDesc} value={draft.temp_step} onChange={(v) => update("temp_step", v)} />
-            <NumberField label="layers_per_band" description={t.layersPerBandDesc} value={draft.layers_per_band} onChange={(v) => update("layers_per_band", Math.max(1, Math.round(v)))} />
-            <NumberField label="bed_temp" description={t.bedTempDesc} value={draft.bed_temp} onChange={(v) => update("bed_temp", v)} />
+            <NumberField label={uiLabels.startTemp} description={t.startTempDesc} value={draft.start_temp} onChange={(v) => update("start_temp", v)} />
+            <NumberField label={uiLabels.endTemp} description={t.endTempDesc} value={draft.end_temp} onChange={(v) => update("end_temp", v)} />
+            <NumberField label={uiLabels.tempStep} description={t.tempStepDesc} value={draft.temp_step} onChange={(v) => update("temp_step", v)} />
+            <NumberField label={uiLabels.layersPerBand} description={t.layersPerBandDesc} value={draft.layers_per_band} onChange={(v) => update("layers_per_band", Math.max(1, Math.round(v)))} />
+            <NumberField label={uiLabels.bedTemp} description={t.bedTempDesc} value={draft.bed_temp} onChange={(v) => update("bed_temp", v)} />
           </Fieldset>
 
           <Fieldset title={t.geometry}>
-            <NumberField label="layer_height" description={t.layerHeightDesc} value={draft.layer_height} onChange={() => {}} readOnly />
-            <NumberField label="mvs_min" description={t.mvsMinDesc} value={draft.mvs_min} onChange={(v) => update("mvs_min", v)} />
-            <NumberField label="mvs_max" description={t.mvsMaxDesc} value={draft.mvs_max} onChange={(v) => update("mvs_max", v)} />
-            <NumberField label="arc_segments" description={t.arcSegmentsDesc} value={draft.arc_segments} onChange={(v) => update("arc_segments", Math.max(12, Math.round(v)))} />
+            <NumberField label={uiLabels.layerHeight} description={t.layerHeightDesc} value={draft.layer_height} onChange={() => {}} readOnly />
+            <NumberField label={uiLabels.mvsMin} description={t.mvsMinDesc} value={draft.mvs_min} onChange={(v) => update("mvs_min", v)} />
+            <NumberField label={uiLabels.mvsMax} description={t.mvsMaxDesc} value={draft.mvs_max} onChange={(v) => update("mvs_max", v)} />
+            <NumberField label={uiLabels.arcSegments} description={t.arcSegmentsDesc} value={draft.arc_segments} onChange={(v) => update("arc_segments", Math.max(12, Math.round(v)))} />
           </Fieldset>
 
           <Fieldset title={t.buildVolume}>
-            <TextField label="bed_x" description={t.bedXDesc} value={draft.bed_x} onChange={(v) => update("bed_x", v)} placeholder={t.presetPlaceholder} />
-            <TextField label="bed_y" description={t.bedYDesc} value={draft.bed_y} onChange={(v) => update("bed_y", v)} placeholder={t.presetPlaceholder} />
+            <TextField label={uiLabels.bedX} description={t.bedXDesc} value={draft.bed_x} onChange={(v) => update("bed_x", v)} placeholder={t.presetPlaceholder} />
+            <TextField label={uiLabels.bedY} description={t.bedYDesc} value={draft.bed_y} onChange={(v) => update("bed_y", v)} placeholder={t.presetPlaceholder} />
           </Fieldset>
 
           <Fieldset title={t.placement}>
-            <TextField label="square_x" description={t.placementDesc} value={draft.square_x} onChange={(v) => update("square_x", v)} placeholder={t.autoPlaceholder} />
-            <TextField label="square_y" description={t.placementDesc} value={draft.square_y} onChange={(v) => update("square_y", v)} placeholder={t.autoPlaceholder} />
-            <TextField label="circle_diameter" description={t.placementDesc} value={draft.circle_diameter} onChange={(v) => update("circle_diameter", v)} placeholder={t.autoPlaceholder} />
+            <TextField label={uiLabels.squareX} description={t.placementDesc} value={draft.square_x} onChange={(v) => update("square_x", v)} placeholder={t.autoPlaceholder} />
+            <TextField label={uiLabels.squareY} description={t.placementDesc} value={draft.square_y} onChange={(v) => update("square_y", v)} placeholder={t.autoPlaceholder} />
+            <TextField label={uiLabels.circleDiameter} description={t.placementDesc} value={draft.circle_diameter} onChange={(v) => update("circle_diameter", v)} placeholder={t.autoPlaceholder} />
           </Fieldset>
 
           <Fieldset title={t.label}>
-            <label className="check"><input type="checkbox" checked={draft.label} onChange={(e) => update("label", e.target.checked)} /> {t.labelEnabled}</label>
-            <TextField label="label_height" description={t.labelHeightDesc} value={draft.label_height} onChange={(v) => update("label_height", v)} placeholder={t.autoPlaceholder} />
+            <label className="check"><input type="checkbox" checked={draft.label} onChange={(e) => update("label", e.target.checked)} /> <span title={labelEnabledTooltip}>{uiLabels.labelEnabled}</span></label>
+            <TextField label={uiLabels.labelHeight} description={t.labelHeightDesc} value={draft.label_height} onChange={(v) => update("label_height", v)} placeholder={t.autoPlaceholder} />
           </Fieldset>
 
           <Fieldset title={t.firmwareMotion}>
-            <NumberField label="motion_accel" description={t.motionAccelDesc} value={draft.motion_accel} onChange={(v) => update("motion_accel", v)} />
-            <NumberField label="motion_velocity" description={t.motionVelocityDesc} value={draft.motion_velocity} onChange={(v) => update("motion_velocity", v)} />
-            <NumberField label="motion_jerk" description={t.motionJerkDesc} value={draft.motion_jerk} onChange={(v) => update("motion_jerk", v)} />
+            <NumberField label={uiLabels.motionAccel} description={t.motionAccelDesc} value={draft.motion_accel} onChange={(v) => update("motion_accel", v)} />
+            <NumberField label={uiLabels.motionVelocity} description={t.motionVelocityDesc} value={draft.motion_velocity} onChange={(v) => update("motion_velocity", v)} />
+            <NumberField label={uiLabels.motionJerk} description={t.motionJerkDesc} value={draft.motion_jerk} onChange={(v) => update("motion_jerk", v)} />
           </Fieldset>
         </section>
 
@@ -607,7 +748,7 @@ function TextField({ label, description, value, onChange, placeholder }: { label
   }
   return (
     <label className="field">
-      <span>{label}</span>
+      <span title={description}>{label}</span>
       {description && <small>{description}</small>}
       <input
         value={draftValue}
@@ -635,7 +776,7 @@ function NumberField({ label, description, value, onChange, readOnly = false }: 
   }
   return (
     <label className="field">
-      <span>{label}</span>
+      <span title={description}>{label}</span>
       {description && <small>{description}</small>}
       <input
         type="number"
@@ -666,7 +807,7 @@ function Select({
   options: Array<string | { value: string; label: string }>;
   onChange: (value: string) => void;
 }) {
-  return <label className="field"><span>{label}</span>{description && <small>{description}</small>}<select value={value} onChange={(e) => onChange(e.target.value)}>{options.map((o) => typeof o === "string" ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
+  return <label className="field"><span title={description}>{label}</span>{description && <small>{description}</small>}<select value={value} onChange={(e) => onChange(e.target.value)}>{options.map((o) => typeof o === "string" ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
 }
 
 function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }) {
