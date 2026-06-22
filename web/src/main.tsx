@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import presetsJson from "./data/printer_presets.json";
 import {
@@ -13,8 +13,9 @@ import {
   makeGcode,
   PrinterPreset,
   SegmentKind,
+  LESIC_METADATA_JSON_PREFIX,
 } from "./generator/mvsGenerator";
-import { bambu3mfFileName, makeBambu3mfBlob, supportsBuiltInBambu3mf } from "./generator/bambu3mf";
+import { bambu3mfFileName, extractBambuPlateGcode, makeBambu3mfBlob, supportsBuiltInBambu3mf } from "./generator/bambu3mf";
 import "./styles.css";
 
 const presets = presetsJson as Record<string, PrinterPreset>;
@@ -91,6 +92,10 @@ const translations = {
     strokeWidth: (stroke: string) => `label width ${stroke}`,
     boundingWarning: "bounding square exceeds bed",
     language: "Language",
+    loadLesicFile: "Load LESIC file",
+    loadConfirm: "Loading this file will replace all current input variables. Continue?",
+    loadedFileLog: (name: string) => `Loaded LESIC settings: ${name}`,
+    loadFileError: (message: string) => `LESIC file load failed: ${message}`,
     labelEnabled: "label",
     nozzleSizeDesc: "Choose one supported nozzle size. Circular line width is set automatically.",
   },
@@ -145,6 +150,10 @@ const translations = {
     strokeWidth: (stroke: string) => `label width ${stroke}`,
     boundingWarning: "바운딩 사각형이 베드를 벗어납니다.",
     language: "언어",
+    loadLesicFile: "LESIC 파일 불러오기",
+    loadConfirm: "파일을 불러오면 현재 입력돼있는 변수가 모두 사라집니다. 정말 실행하겠습니까?",
+    loadedFileLog: (name: string) => `LESIC 설정 불러옴: ${name}`,
+    loadFileError: (message: string) => `LESIC 파일 불러오기 실패: ${message}`,
     labelEnabled: "라벨 사용",
     nozzleSizeDesc: "지원 노즐 구경 중 하나를 선택합니다. 원형 테스트 선폭은 자동으로 설정됩니다.",
   },
@@ -191,9 +200,115 @@ type Draft = {
 };
 
 const defaultPreset = presetNames.includes("SNAPMAKER_U1") ? "SNAPMAKER_U1" : presetNames[0];
+const autoOutputFields: Array<keyof Draft> = ["printer_preset", "start_temp", "end_temp", "mvs_min", "mvs_max"];
+
+function fileTextToken(value: string) {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "LESIC";
+}
+
+function fileNumberToken(value: number, minIntegerDigits = 0) {
+  const sign = value < 0 ? "m" : "";
+  const text = fmt(Math.abs(value));
+  const [whole, fraction] = text.split(".");
+  const paddedWhole = whole.padStart(minIntegerDigits, "0");
+  return `${sign}${paddedWhole}${fraction ? `p${fraction}` : ""}`;
+}
+
+function calibrationBaseNameFromValues(printerName: string, startTemp: number, endTemp: number, mvsMin: number, mvsMax: number) {
+  return `${fileTextToken(printerName)}_${fileNumberToken(startTemp)}_${fileNumberToken(endTemp)}__${fileNumberToken(mvsMin, 2)}_${fileNumberToken(mvsMax, 2)}`;
+}
+
+function autoOutputName(draft: Draft) {
+  const preset = presets[draft.printer_preset] ?? {};
+  const printerName = preset.printer_name ?? draft.printer_preset;
+  return `${calibrationBaseNameFromValues(printerName, draft.start_temp, draft.end_temp, draft.mvs_min, draft.mvs_max)}.gcode`;
+}
+
+function isFirmwareMode(value: unknown): value is FirmwareMode {
+  return value === "klipper" || value === "marlin" || value === "bambu" || value === "unknown";
+}
+
+function numberFromMetadata(data: Record<string, unknown>, key: string, fallback: number) {
+  const value = data[key];
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function stringFromMetadata(data: Record<string, unknown>, key: string, fallback = "") {
+  const value = data[key];
+  return typeof value === "string" ? value : fallback;
+}
+
+function booleanFromMetadata(data: Record<string, unknown>, key: string, fallback: boolean) {
+  const value = data[key];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") return value === "true" || value === "1";
+  return fallback;
+}
+
+function parseLesicMetadata(gcode: string) {
+  const line = gcode.split(/\r?\n/).find((item) => item.startsWith(LESIC_METADATA_JSON_PREFIX));
+  if (!line) throw new Error("LESIC metadata block was not found.");
+  const data = JSON.parse(line.slice(LESIC_METADATA_JSON_PREFIX.length));
+  if (!data || typeof data !== "object" || data.app !== "LESIC") {
+    throw new Error("Invalid LESIC metadata.");
+  }
+  return data as Record<string, unknown>;
+}
+
+function draftFromMetadata(data: Record<string, unknown>) {
+  const presetName = stringFromMetadata(data, "printer_preset", defaultPreset);
+  const printerPreset = presets[presetName] ? presetName : defaultPreset;
+  const nozzleSize = numberFromMetadata(data, "nozzle_size", initialDraft.nozzle_size);
+  const next: Draft = {
+    ...initialDraft,
+    output: stringFromMetadata(data, "output"),
+    printer_preset: printerPreset,
+    firmware_mode: isFirmwareMode(data.firmware_mode) ? data.firmware_mode : inferFirmwareMode(printerPreset),
+    filament_name: stringFromMetadata(data, "filament_name", initialDraft.filament_name),
+    nozzle_size: nozzleSize,
+    start_temp: numberFromMetadata(data, "start_temp", initialDraft.start_temp),
+    end_temp: numberFromMetadata(data, "end_temp", initialDraft.end_temp),
+    temp_step: numberFromMetadata(data, "temp_step", initialDraft.temp_step),
+    layers_per_band: Math.max(1, Math.round(numberFromMetadata(data, "layers_per_band", initialDraft.layers_per_band))),
+    bed_temp: numberFromMetadata(data, "bed_temp", initialDraft.bed_temp),
+    temp_wait_tolerance: numberFromMetadata(data, "temp_wait_tolerance", initialDraft.temp_wait_tolerance),
+    bed_x: String(numberFromMetadata(data, "bed_x", presets[printerPreset]?.bed_x ?? 0) || ""),
+    bed_y: String(numberFromMetadata(data, "bed_y", presets[printerPreset]?.bed_y ?? 0) || ""),
+    layer_height: numberFromMetadata(data, "layer_height", optimalLayerHeight(nozzleSize)),
+    mvs_min: numberFromMetadata(data, "mvs_min", initialDraft.mvs_min),
+    mvs_max: numberFromMetadata(data, "mvs_max", initialDraft.mvs_max),
+    arc_segments: Math.max(12, Math.round(numberFromMetadata(data, "arc_segments", initialDraft.arc_segments))),
+    square_x: String(numberFromMetadata(data, "square_x", presets[printerPreset]?.square_x ?? 0) || ""),
+    square_y: String(numberFromMetadata(data, "square_y", presets[printerPreset]?.square_y ?? 0) || ""),
+    circle_diameter: String(numberFromMetadata(data, "circle_diameter", presets[printerPreset]?.circle_diameter ?? 0) || ""),
+    label: booleanFromMetadata(data, "label", initialDraft.label),
+    label_height: data.label_height == null ? "" : String(numberFromMetadata(data, "label_height", 0)),
+    label_x_scale: numberFromMetadata(data, "label_x_scale", initialDraft.label_x_scale),
+    label_stroke_width: numberFromMetadata(data, "label_stroke_width", initialDraft.label_stroke_width),
+    label_connector_width: numberFromMetadata(data, "label_connector_width", initialDraft.label_connector_width),
+    label_speed: numberFromMetadata(data, "label_speed", initialDraft.label_speed),
+    travel_speed: numberFromMetadata(data, "travel_speed", initialDraft.travel_speed),
+    z_travel_speed: numberFromMetadata(data, "z_travel_speed", initialDraft.z_travel_speed),
+    min_xy_speed: numberFromMetadata(data, "min_xy_speed", initialDraft.min_xy_speed),
+    max_xy_speed: numberFromMetadata(data, "max_xy_speed", initialDraft.max_xy_speed),
+    retract: numberFromMetadata(data, "retract", initialDraft.retract),
+    extrusion_multiplier: numberFromMetadata(data, "extrusion_multiplier", initialDraft.extrusion_multiplier),
+    motion_accel: numberFromMetadata(data, "motion_accel", initialDraft.motion_accel),
+    motion_velocity: numberFromMetadata(data, "motion_velocity", initialDraft.motion_velocity),
+    motion_minimum_cruise_ratio: numberFromMetadata(data, "motion_minimum_cruise_ratio", initialDraft.motion_minimum_cruise_ratio),
+    motion_square_corner_velocity: numberFromMetadata(data, "motion_square_corner_velocity", initialDraft.motion_square_corner_velocity),
+    motion_jerk: numberFromMetadata(data, "motion_jerk", initialDraft.motion_jerk),
+  };
+  return { ...next, output: next.output || autoOutputName(next) };
+}
 
 const initialDraft: Draft = {
-  output: "U1_v21_web.gcode",
+  output: "U1_210_165__08_24.gcode",
   printer_preset: defaultPreset,
   firmware_mode: inferFirmwareMode(defaultPreset),
   filament_name: "Unknown_pla",
@@ -239,6 +354,7 @@ function numberOr(value: string, fallback: number) {
 
 function buildConfig(draft: Draft): GeneratorConfig {
   const preset = presets[draft.printer_preset] ?? {};
+  const printerName = preset.printer_name ?? draft.printer_preset;
   const bedX = draft.bed_x.trim() === "" ? preset.bed_x ?? 220 : numberOr(draft.bed_x, preset.bed_x ?? 220);
   const bedY = draft.bed_y.trim() === "" ? preset.bed_y ?? 220 : numberOr(draft.bed_y, preset.bed_y ?? 220);
   const placement = defaultPlacement(bedX, bedY);
@@ -249,8 +365,8 @@ function buildConfig(draft: Draft): GeneratorConfig {
 
   return {
     ...draft,
-    output: draft.output || "mvs_calibrator.gcode",
-    printer_name: preset.printer_name ?? draft.printer_preset,
+    output: draft.output || autoOutputName(draft),
+    printer_name: printerName,
     source: preset.source ?? "",
     nozzle_size: draft.nozzle_size,
     line_width: optimalLineWidth(draft.nozzle_size),
@@ -278,6 +394,7 @@ function App() {
   const [language, setLanguage] = useState<Language>("ko");
   const [showGcode, setShowGcode] = useState(false);
   const [generatedGcode, setGeneratedGcode] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const t = translations[language];
   const [logs, setLogs] = useState<string[]>([translations.ko.readyLog]);
   const { cfg, error } = useMemo(() => {
@@ -290,11 +407,17 @@ function App() {
   }, [draft]);
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
-    setDraft((prev) => ({ ...prev, [key]: value }));
+    setDraft((prev) => {
+      const next = { ...prev, [key]: value };
+      return autoOutputFields.includes(key) ? { ...next, output: autoOutputName(next) } : next;
+    });
   }
 
   function selectPreset(name: string) {
-    setDraft((prev) => ({ ...prev, printer_preset: name, firmware_mode: inferFirmwareMode(name) }));
+    setDraft((prev) => {
+      const next = { ...prev, printer_preset: name, firmware_mode: inferFirmwareMode(name) };
+      return { ...next, output: autoOutputName(next) };
+    });
   }
 
   function generate() {
@@ -344,6 +467,28 @@ function App() {
     setLogs((prev) => [...prev, t.outputSetLog(next.trim())]);
   }
 
+  async function loadLesicFile(file: File) {
+    try {
+      const gcode = file.name.toLowerCase().endsWith(".3mf") ? await extractBambuPlateGcode(file) : await file.text();
+      const metadata = parseLesicMetadata(gcode);
+      const next = draftFromMetadata(metadata);
+      setDraft(next);
+      setGeneratedGcode(gcode);
+      setShowGcode(false);
+      setLogs((prev) => [...prev, t.loadedFileLog(file.name)]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLogs((prev) => [...prev, t.loadFileError(message)]);
+    }
+  }
+
+  function handleFileInput(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file && !window.confirm(t.loadConfirm)) return;
+    if (file) void loadLesicFile(file);
+  }
+
   return (
     <main className="app">
       <header className="appHeader">
@@ -352,13 +497,17 @@ function App() {
             <h1>LESIC</h1>
             <p>Lowtemp Extrusion Support Interface Calibration</p>
           </div>
-          <label className="languageSwitch">
-            <span>{t.language}</span>
-            <select value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
-              <option value="ko">한국어</option>
-              <option value="en">English</option>
-            </select>
-          </label>
+          <div className="headerActions">
+            <button type="button" className="headerButton" onClick={() => fileInputRef.current?.click()}>{t.loadLesicFile}</button>
+            <input ref={fileInputRef} className="hiddenFileInput" type="file" accept=".gcode,.3mf,.gcode.3mf,text/plain,model/3mf" onChange={handleFileInput} />
+            <label className="languageSwitch">
+              <span>{t.language}</span>
+              <select value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
+                <option value="ko">한국어</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
         </div>
         {draft.firmware_mode === "unknown" && <div className="warning">{t.unknownWarning}</div>}
       </header>

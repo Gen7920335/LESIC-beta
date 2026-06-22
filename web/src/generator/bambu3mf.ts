@@ -1,4 +1,4 @@
-import { fmt, GeneratorConfig, LABEL_OUTLINE_WIDTH } from "./mvsGenerator";
+import { fmt, GeneratorConfig, LABEL_OUTLINE_WIDTH, lesicMetadataBlock } from "./mvsGenerator";
 
 type BambuTemplate = {
   file: string;
@@ -76,7 +76,14 @@ export async function makeBambu3mfBlob(cfg: GeneratorConfig, gcode: string) {
     return entry;
   });
 
-  return new Blob([makeZip(patchedEntries, new Date())], { type: "model/3mf" });
+  return new Blob([await makeZip(patchedEntries, new Date())], { type: "model/3mf" });
+}
+
+export async function extractBambuPlateGcode(blob: Blob) {
+  const entries = await readZipEntries(new Uint8Array(await blob.arrayBuffer()));
+  const entry = entries.find((item) => item.name === "Metadata/plate_1.gcode");
+  if (!entry) throw new Error("Bambu 3MF file is missing Metadata/plate_1.gcode");
+  return textDecoder.decode(entry.data);
 }
 
 async function fetchTemplate(file: string) {
@@ -109,11 +116,22 @@ function makeBambuPlateGcode(cfg: GeneratorConfig, gcode: string, templateGcode:
 
   const totalLayers = totalCalibrationLayers(cfg);
   const totalHeight = totalLayers * cfg.layer_height;
-  const prefix = patchTemplatePrefix(templateLines.slice(0, firstLayerIndex).join("\n"), cfg, totalLayers, totalHeight);
+  const prefix = insertMetadataIntoPrefix(patchTemplatePrefix(templateLines.slice(0, firstLayerIndex).join("\n"), cfg, totalLayers, totalHeight), cfg, totalLayers, totalHeight);
   const body = makeDecoratedLesicBody(cfg, gcode, totalLayers, totalHeight);
   const suffix = patchTemplateSuffix(templateLines.slice(suffixStart).join("\n"), totalHeight);
 
   return `${prefix}\n${body}\n${suffix}\n`;
+}
+
+function insertMetadataIntoPrefix(prefix: string, cfg: GeneratorConfig, totalLayers: number, totalHeight: number) {
+  const metadata = lesicMetadataBlock(cfg, totalLayers, totalHeight);
+  const lines = prefix.split("\n");
+  const headerStart = lines.findIndex((line) => line.trim() === "; HEADER_BLOCK_START");
+  if (headerStart >= 0) {
+    lines.splice(headerStart + 1, 0, ...metadata);
+    return lines.join("\n");
+  }
+  return `${metadata.join("\n")}\n${prefix}`;
 }
 
 function patchTemplatePrefix(prefix: string, cfg: GeneratorConfig, totalLayers: number, totalHeight: number) {
@@ -363,30 +381,40 @@ async function inflateRaw(data: Uint8Array, method: number) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-function makeZip(entries: ZipEntry[], date: Date) {
+async function deflateRaw(data: Uint8Array) {
+  if (!("CompressionStream" in globalThis)) return data;
+  const stream = new Blob([data as BlobPart]).stream().pipeThrough(new CompressionStream("deflate-raw" as CompressionFormat));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function makeZip(entries: ZipEntry[], date: Date) {
   const localChunks: Uint8Array[] = [];
   const centralChunks: Uint8Array[] = [];
   let offset = 0;
   const { dosTime, dosDate } = dosDateTime(date);
 
-  entries.forEach((entry) => {
+  for (const entry of entries) {
     const name = textEncoder.encode(entry.name);
     const crc = crc32(entry.data);
-    const local = new Uint8Array(30 + name.length + entry.data.length);
+    const compressed = entry.data.length > 1024 ? await deflateRaw(entry.data) : entry.data;
+    const useCompressed = compressed.length < entry.data.length;
+    const payload = useCompressed ? compressed : entry.data;
+    const method = useCompressed ? 8 : 0;
+    const local = new Uint8Array(30 + name.length + payload.length);
     const lv = new DataView(local.buffer);
     lv.setUint32(0, 0x04034b50, true);
     lv.setUint16(4, 20, true);
     lv.setUint16(6, 0x0800, true);
-    lv.setUint16(8, 0, true);
+    lv.setUint16(8, method, true);
     lv.setUint16(10, dosTime, true);
     lv.setUint16(12, dosDate, true);
     lv.setUint32(14, crc, true);
-    lv.setUint32(18, entry.data.length, true);
+    lv.setUint32(18, payload.length, true);
     lv.setUint32(22, entry.data.length, true);
     lv.setUint16(26, name.length, true);
     lv.setUint16(28, 0, true);
     local.set(name, 30);
-    local.set(entry.data, 30 + name.length);
+    local.set(payload, 30 + name.length);
     localChunks.push(local);
 
     const central = new Uint8Array(46 + name.length);
@@ -395,11 +423,11 @@ function makeZip(entries: ZipEntry[], date: Date) {
     cv.setUint16(4, 20, true);
     cv.setUint16(6, 20, true);
     cv.setUint16(8, 0x0800, true);
-    cv.setUint16(10, 0, true);
+    cv.setUint16(10, method, true);
     cv.setUint16(12, dosTime, true);
     cv.setUint16(14, dosDate, true);
     cv.setUint32(16, crc, true);
-    cv.setUint32(20, entry.data.length, true);
+    cv.setUint32(20, payload.length, true);
     cv.setUint32(24, entry.data.length, true);
     cv.setUint16(28, name.length, true);
     cv.setUint16(30, 0, true);
@@ -411,7 +439,7 @@ function makeZip(entries: ZipEntry[], date: Date) {
     central.set(name, 46);
     centralChunks.push(central);
     offset += local.length;
-  });
+  }
 
   const centralOffset = offset;
   const centralSize = centralChunks.reduce((sum, chunk) => sum + chunk.length, 0);

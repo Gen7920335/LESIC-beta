@@ -62,6 +62,26 @@ textarea {
   gap: 12px;
 }
 
+.headerActions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.headerButton {
+  min-width: 132px;
+  min-height: 28px;
+  padding: 0 8px;
+  color: #000000;
+  background: #eeeeee;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hiddenFileInput {
+  display: none;
+}
+
 .languageSwitch {
   display: grid;
   gap: 4px;
