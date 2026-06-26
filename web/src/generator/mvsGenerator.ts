@@ -871,10 +871,10 @@ function buildSingleLineTextSegments(text: string, charH: number, xScale: number
   return all;
 }
 
-function buildSingleLineOutlineSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
+function buildSingleLineOutlineSegments(text: string, charH: number, xScale: number, lineWidth: number, advanceScale = 1): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
-  const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth);
+  const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth) * Math.max(0.1, advanceScale);
   const width = lineWidthUnits(text, advanceUnits) * cell * xScale;
   const xLeft = -width / 2;
   const y0 = -charH / 2;
@@ -931,10 +931,10 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
     const major = value % 5 === 0;
-    const outerRadius = radius - 1.1;
-    const innerRadius = radius - (major ? 3.2 : 2.1);
-    const radialDepth = Math.max(0.4, outerRadius - innerRadius);
-    const tangentialWidth = major ? 1.35 : 0.95;
+    const outerRadius = radius - 0.5;
+    const innerRadius = radius - (major ? 4.2 : 3.0);
+    const radialDepth = Math.max(0.8, outerRadius - innerRadius);
+    const tangentialWidth = major ? 1.9 : 1.35;
     const markerRadius = (outerRadius + innerRadius) / 2;
     const anchor = pointOnCircle(cx, cy, markerRadius, angle);
     const marker = buildOutlinedRectSegments(tangentialWidth, radialDepth);
@@ -952,7 +952,7 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
   const cx = cfg.square_x + radius;
   const cy = cfg.square_y + radius;
   const sign = cfg.clockwise ? -1 : 1;
-  const textRadius = radius - charH * 0.75 - 1.0;
+  const textRadius = radius - (charH / 2) - 0.5;
   const all: TypedSegment[] = [];
 
   values.forEach((value) => {
@@ -961,7 +961,7 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
     const anchor = pointOnCircle(cx, cy, textRadius, angle);
     const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
     const text = Number.isInteger(value) ? String(Math.round(value)) : fmt(value);
-    const segs = buildSingleLineOutlineSegments(text, charH, cfg.label_x_scale, cfg.line_width);
+    const segs = buildSingleLineOutlineSegments(text, charH, cfg.label_x_scale, cfg.line_width, 1.2);
     all.push(...transformSegments(segs, tangentDeg, anchor[0], anchor[1]));
   });
 
