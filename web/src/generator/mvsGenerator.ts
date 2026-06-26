@@ -91,6 +91,8 @@ export const LABEL_OUTLINE_WIDTH = 0.25;
 const LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2 + LABEL_OUTLINE_WIDTH / 2;
 const LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH;
 const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", ",", "•"]);
+const OUTER_BRIM_LINES = 1;
+const INNER_BRIM_LINES = 5;
 
 const FONT: Record<string, Point[][]> = {
   "0": [[ [0, 0], [0, 7], [5, 7], [5, 0], [0, 0], [5, 7] ]],
@@ -830,6 +832,30 @@ function transformSegments(segs: TypedSegment[], deg: number, tx: number, ty: nu
   });
 }
 
+function rectLoopSegments(width: number, height: number): TypedSegment[] {
+  if (width <= 0 || height <= 0) return [];
+  const hw = width / 2;
+  const hh = height / 2;
+  const loop: Point[] = [
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [-hw, hh],
+    [-hw, -hh],
+  ];
+  const segs: TypedSegment[] = [];
+  for (let i = 0; i < loop.length - 1; i++) appendSegment(segs, loop[i], loop[i + 1], "stroke");
+  return segs;
+}
+
+function buildOutlinedRectSegments(width: number, height: number, inset = LABEL_OUTLINE_WIDTH): TypedSegment[] {
+  const outer = rectLoopSegments(width, height);
+  const innerWidth = width - inset * 2;
+  const innerHeight = height - inset * 2;
+  const inner = innerWidth > inset && innerHeight > inset ? rectLoopSegments(innerWidth, innerHeight) : [];
+  return [...outer, ...inner];
+}
+
 function buildSingleLineTextSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
@@ -841,6 +867,41 @@ function buildSingleLineTextSegments(text: string, charH: number, xScale: number
   [...text].forEach((ch, ci) => {
     const x0 = xLeft + ci * advanceUnits * cell * xScale;
     all.push(...buildGlyphCenterlines(ch, x0, y0, cell, xScale));
+  });
+  return all;
+}
+
+function buildSingleLineOutlineSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
+  if (!text.trim()) return [];
+  const cell = charH / 7;
+  const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth);
+  const width = lineWidthUnits(text, advanceUnits) * cell * xScale;
+  const xLeft = -width / 2;
+  const y0 = -charH / 2;
+  const all: TypedSegment[] = [];
+  [...text].forEach((ch, ci) => {
+    const x0 = xLeft + ci * advanceUnits * cell * xScale;
+    const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
+    all.push(...glyph.segments);
+  });
+  return all;
+}
+
+function brimRadii(radius: number, lineWidth: number) {
+  const radii: Array<{ radius: number; kind: "outer" | "inner"; index: number }> = [];
+  for (let i = 0; i < OUTER_BRIM_LINES; i++) radii.push({ radius: radius + lineWidth * (i + 1), kind: "outer", index: i + 1 });
+  for (let i = 0; i < INNER_BRIM_LINES; i++) radii.push({ radius: radius - lineWidth * (i + 1), kind: "inner", index: i + 1 });
+  return radii.filter((item) => item.radius > lineWidth * 0.75);
+}
+
+function buildBrimSegments(cfg: GeneratorConfig): TypedSegment[] {
+  const radius = cfg.circle_diameter / 2;
+  const cx = cfg.square_x + radius;
+  const cy = cfg.square_y + radius;
+  const all: TypedSegment[] = [];
+  brimRadii(radius, cfg.line_width).forEach(({ radius: brimRadius }) => {
+    const pts = arcPoints(cx, cy, brimRadius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
+    pts.slice(1).forEach((p, i) => appendSegment(all, pts[i], p, "stroke"));
   });
   return all;
 }
@@ -869,9 +930,15 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
   values.forEach((value) => {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
-    const outer = pointOnCircle(cx, cy, radius - 1.1, angle);
-    const inner = pointOnCircle(cx, cy, radius - (value % 5 === 0 ? 3.2 : 2.1), angle);
-    appendSegment(all, outer, inner, "stroke");
+    const major = value % 5 === 0;
+    const outerRadius = radius - 1.1;
+    const innerRadius = radius - (major ? 3.2 : 2.1);
+    const radialDepth = Math.max(0.4, outerRadius - innerRadius);
+    const tangentialWidth = major ? 1.35 : 0.95;
+    const markerRadius = (outerRadius + innerRadius) / 2;
+    const anchor = pointOnCircle(cx, cy, markerRadius, angle);
+    const marker = buildOutlinedRectSegments(tangentialWidth, radialDepth);
+    all.push(...transformSegments(marker, angle, anchor[0], anchor[1]));
   });
 
   return all;
@@ -894,7 +961,7 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
     const anchor = pointOnCircle(cx, cy, textRadius, angle);
     const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
     const text = Number.isInteger(value) ? String(Math.round(value)) : fmt(value);
-    const segs = buildSingleLineTextSegments(text, charH, cfg.label_x_scale, cfg.line_width);
+    const segs = buildSingleLineOutlineSegments(text, charH, cfg.label_x_scale, cfg.line_width);
     all.push(...transformSegments(segs, tangentDeg, anchor[0], anchor[1]));
   });
 
@@ -989,11 +1056,15 @@ export function getPreviewData(cfg: GeneratorConfig): PreviewData {
   const cx = cfg.square_x + radius;
   const cy = cfg.square_y + radius;
   const fallbackCircle = arcPoints(cx, cy, radius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
+  const brimSegments = buildBrimSegments(cfg);
   const labelSegments = cfg.label ? buildLabelSegments(cfg) : [];
   return {
     bed: { x: cfg.bed_x, y: cfg.bed_y },
     square: { x: cfg.square_x, y: cfg.square_y, d: cfg.circle_diameter },
-    circleSegments: fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"]),
+    circleSegments: [
+      ...brimSegments,
+      ...fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment),
+    ],
     labelSegments,
     seam: fallbackCircle[0],
     totalLayers: cfg.bands * cfg.layers_per_band,
@@ -1010,6 +1081,7 @@ export function makeGcode(cfg: GeneratorConfig) {
   const totalLayers = cfg.bands * cfg.layers_per_band;
   const totalHeight = totalLayers * cfg.layer_height;
   const pts = arcPoints(centerX, centerY, radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
+  const brimLoops = brimRadii(radius, cfg.line_width).map((item) => ({ ...item, pts: arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise) }));
   const labelLines = makeLabelLines(cfg);
   const lines: string[] = [
     ...lesicMetadataBlock(cfg, totalLayers, totalHeight),
@@ -1112,6 +1184,21 @@ export function makeGcode(cfg: GeneratorConfig) {
     } else {
       lines.push(`G0 Z${fmt(z)} F${fmt(cfg.z_travel_speed * 60, 1)}`);
       lines.push(`G0 X${fmt(start[0])} Y${fmt(start[1])} F${fmt(cfg.travel_speed * 60, 1)} ; seam / 0% MVS point on bounding square edge`);
+    }
+    if (layer === 1 && brimLoops.length) {
+      lines.push("; ---------- first layer brim ----------");
+      brimLoops.forEach(({ kind, index, radius: brimRadius, pts: brimPts }) => {
+        const brimStart = brimPts[0];
+        lines.push(`G0 X${fmt(brimStart[0])} Y${fmt(brimStart[1])} F${fmt(cfg.travel_speed * 60, 1)} ; brim_${kind}_${index}_start r=${fmt(brimRadius)}`);
+        for (let i = 0; i < cfg.arc_segments; i++) {
+          const b = brimPts[i + 1];
+          const e = dist(brimPts[i], b) * crossSection / fa * cfg.extrusion_multiplier;
+          estimatedE += e;
+          lines.push(`G1 X${fmt(b[0])} Y${fmt(b[1])} E${fmt(e, 5)} F3600 ; brim_${kind}_${index}`);
+        }
+      });
+      lines.push(`G0 X${fmt(start[0])} Y${fmt(start[1])} F${fmt(cfg.travel_speed * 60, 1)} ; brim_end_to_seam_travel`);
+      lines.push("; ---------- end first layer brim ----------");
     }
     if (cfg.retract > 0) {
       lines.push(`G1 E-${fmt(cfg.retract)} F${fmt(cfg.retract_speed * 60, 1)} ; retract`, `G1 E${fmt(cfg.retract)} F${fmt(cfg.retract_speed * 60, 1)} ; unretract`);
