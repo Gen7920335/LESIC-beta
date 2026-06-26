@@ -906,6 +906,26 @@ function buildBrimSegments(cfg: GeneratorConfig): TypedSegment[] {
   return all;
 }
 
+function segmentMidpoint(a: Point, b: Point): Point {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+
+function segmentNearSegment(a0: Point, a1: Point, b0: Point, b1: Point, clearance: number) {
+  if (segmentsIntersect(a0, a1, b0, b1)) return true;
+  if (pointToSegmentDistance(a0, b0, b1) <= clearance) return true;
+  if (pointToSegmentDistance(a1, b0, b1) <= clearance) return true;
+  if (pointToSegmentDistance(segmentMidpoint(a0, a1), b0, b1) <= clearance) return true;
+  if (pointToSegmentDistance(b0, a0, a1) <= clearance) return true;
+  if (pointToSegmentDistance(b1, a0, a1) <= clearance) return true;
+  if (pointToSegmentDistance(segmentMidpoint(b0, b1), a0, a1) <= clearance) return true;
+  return false;
+}
+
+function filterSegmentsByObstacles(segments: TypedSegment[], obstacles: TypedSegment[], clearance: number) {
+  if (!obstacles.length) return segments;
+  return segments.filter(([a, b]) => !obstacles.some(([p0, p1]) => segmentNearSegment(a, b, p0, p1, clearance)));
+}
+
 function ringMvsLabelValues(cfg: GeneratorConfig) {
   const values: number[] = [cfg.mvs_min];
   const startMultiple = Math.ceil(cfg.mvs_min / 5) * 5;
@@ -968,6 +988,10 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
   return all;
 }
 
+function buildRingAnnotationSegments(cfg: GeneratorConfig) {
+  return [...buildRingMvsTickSegments(cfg), ...buildRingMvsLabels(cfg)];
+}
+
 export function makeLabelLines(cfg: GeneratorConfig) {
   const layerHeightText = fmt(cfg.layer_height);
   if (cfg.label_layout === "one-line") {
@@ -982,7 +1006,7 @@ export function makeLabelLines(cfg: GeneratorConfig) {
   ];
 }
 
-export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
+function buildBottomLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
   if (!cfg.label) return [];
   const lines = makeLabelLines(cfg);
   let charH = baseBottomLabelHeight(cfg);
@@ -1008,9 +1032,12 @@ export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
     ...all,
     ...buildInterlineRails(linesGlyphs, cell, Math.max(0, cfg.label_connector_width / 2)),
     ...buildHullLoops(all),
-    ...buildRingMvsTickSegments(cfg),
-    ...buildRingMvsLabels(cfg),
   ];
+}
+
+export function buildLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
+  if (!cfg.label) return [];
+  return [...buildBottomLabelSegments(cfg), ...buildRingAnnotationSegments(cfg)];
 }
 
 function emitFirmwareMotionBlock(lines: string[], cfg: GeneratorConfig) {
@@ -1056,14 +1083,16 @@ export function getPreviewData(cfg: GeneratorConfig): PreviewData {
   const cx = cfg.square_x + radius;
   const cy = cfg.square_y + radius;
   const fallbackCircle = arcPoints(cx, cy, radius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
-  const brimSegments = buildBrimSegments(cfg);
-  const labelSegments = cfg.label ? buildLabelSegments(cfg) : [];
+  const ringSegments = cfg.label ? buildRingAnnotationSegments(cfg) : [];
+  const brimSegments = filterSegmentsByObstacles(buildBrimSegments(cfg), ringSegments, 0.12);
+  const bodySegments = filterSegmentsByObstacles(fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment), ringSegments, 0.12);
+  const labelSegments = cfg.label ? [...buildBottomLabelSegments(cfg), ...ringSegments] : [];
   return {
     bed: { x: cfg.bed_x, y: cfg.bed_y },
     square: { x: cfg.square_x, y: cfg.square_y, d: cfg.circle_diameter },
     circleSegments: [
       ...brimSegments,
-      ...fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment),
+      ...bodySegments,
     ],
     labelSegments,
     seam: fallbackCircle[0],
@@ -1081,7 +1110,19 @@ export function makeGcode(cfg: GeneratorConfig) {
   const totalLayers = cfg.bands * cfg.layers_per_band;
   const totalHeight = totalLayers * cfg.layer_height;
   const pts = arcPoints(centerX, centerY, radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
-  const brimLoops = brimRadii(radius, cfg.line_width).map((item) => ({ ...item, pts: arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise) }));
+  const ringSegments = cfg.label ? buildRingAnnotationSegments(cfg) : [];
+  const bodySegments = filterSegmentsByObstacles(pts.slice(1).map((p, i) => [pts[i], p, "stroke"] as TypedSegment), ringSegments, 0.12);
+  const brimLoops = brimRadii(radius, cfg.line_width).map((item) => ({
+    ...item,
+    segments: filterSegmentsByObstacles(
+      arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise).slice(1).map((p, i, arr) => {
+        const allPts = arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
+        return [allPts[i], p, "stroke"] as TypedSegment;
+      }),
+      ringSegments,
+      0.12,
+    ),
+  }));
   const labelLines = makeLabelLines(cfg);
   const lines: string[] = [
     ...lesicMetadataBlock(cfg, totalLayers, totalHeight),
@@ -1135,7 +1176,7 @@ export function makeGcode(cfg: GeneratorConfig) {
   let labelEnd: Point | undefined;
   if (cfg.label) {
     emitTemperatureSet(lines, cfg, cfg.start_temp, "min");
-    const typed = buildLabelSegments(cfg);
+    const typed = [...buildBottomLabelSegments(cfg), ...ringSegments];
     const labelStrokeWidth = LABEL_OUTLINE_WIDTH;
     const labelConnectorWidth = Math.max(0, cfg.label_connector_width);
     lines.push("", "; ---------- bottom inner label ----------", "; label_toolpath=glyph_outer_double_contour_plus_convex_hull", "; label_visual_layout=three_line_default", "; label_path_order=line1_LTR_line2_LTR_line3_LTR", "; label_width_mode=stroke_vs_connector", `; label_stroke_width=${fmt(labelStrokeWidth)}`, `; label_connector_width=${fmt(labelConnectorWidth)}`, "; label_inner_contours_per_glyph=2", "; label_outer_hull_passes=2", "; label_inner_contour_gap_mm=0", `; label_layout=${cfg.label_layout}`, `; label_lines=${labelLines.join(" | ")}`, `; ring_mvs_values=${ringMvsLabelValues(cfg).map((v) => fmt(v)).join(",")}`, `; label_segments_total=${typed.length}`, `; label_segments_stroke=${typed.filter((s) => s[2] === "stroke").length}`, `; label_segments_connector=${typed.filter((s) => s[2] === "connector").length}`);
@@ -1187,15 +1228,20 @@ export function makeGcode(cfg: GeneratorConfig) {
     }
     if (layer === 1 && brimLoops.length) {
       lines.push("; ---------- first layer brim ----------");
-      brimLoops.forEach(({ kind, index, radius: brimRadius, pts: brimPts }) => {
-        const brimStart = brimPts[0];
+      brimLoops.forEach(({ kind, index, radius: brimRadius, segments }) => {
+        if (!segments.length) return;
+        const brimStart = segments[0][0];
         lines.push(`G0 X${fmt(brimStart[0])} Y${fmt(brimStart[1])} F${fmt(cfg.travel_speed * 60, 1)} ; brim_${kind}_${index}_start r=${fmt(brimRadius)}`);
-        for (let i = 0; i < cfg.arc_segments; i++) {
-          const b = brimPts[i + 1];
-          const e = dist(brimPts[i], b) * crossSection / fa * cfg.extrusion_multiplier;
+        let cursor = brimStart;
+        segments.forEach(([p0, p1]) => {
+          if (dist(cursor, p0) > 1e-9) {
+            lines.push(`G0 X${fmt(p0[0])} Y${fmt(p0[1])} F${fmt(cfg.travel_speed * 60, 1)} ; brim_${kind}_${index}_jump`);
+          }
+          const e = dist(p0, p1) * crossSection / fa * cfg.extrusion_multiplier;
           estimatedE += e;
-          lines.push(`G1 X${fmt(b[0])} Y${fmt(b[1])} E${fmt(e, 5)} F3600 ; brim_${kind}_${index}`);
-        }
+          cursor = p1;
+          lines.push(`G1 X${fmt(p1[0])} Y${fmt(p1[1])} E${fmt(e, 5)} F3600 ; brim_${kind}_${index}`);
+        });
       });
       lines.push(`G0 X${fmt(start[0])} Y${fmt(start[1])} F${fmt(cfg.travel_speed * 60, 1)} ; brim_end_to_seam_travel`);
       lines.push("; ---------- end first layer brim ----------");
@@ -1203,8 +1249,8 @@ export function makeGcode(cfg: GeneratorConfig) {
     if (cfg.retract > 0) {
       lines.push(`G1 E-${fmt(cfg.retract)} F${fmt(cfg.retract_speed * 60, 1)} ; retract`, `G1 E${fmt(cfg.retract)} F${fmt(cfg.retract_speed * 60, 1)} ; unretract`);
     }
-    for (let i = 0; i < cfg.arc_segments; i++) {
-      const progressMid = (i + 0.5) / cfg.arc_segments;
+    bodySegments.forEach(([a, b], i) => {
+      const progressMid = (i + 0.5) / Math.max(1, bodySegments.length);
       const requestedMvs = cfg.mvs_min + (cfg.mvs_max - cfg.mvs_min) * progressMid;
       let xySpeed = layer === 1 ? 60 : (requestedMvs > 0 ? requestedMvs / crossSection : cfg.min_xy_speed);
       let actualMvs = xySpeed * crossSection;
@@ -1212,11 +1258,16 @@ export function makeGcode(cfg: GeneratorConfig) {
         xySpeed = cfg.max_xy_speed;
         actualMvs = xySpeed * crossSection;
       }
-      const b = pts[i + 1];
-      const e = dist(pts[i], b) * crossSection / fa * cfg.extrusion_multiplier;
+      if (dist(a, start) > 1e-9 && i === 0) {
+        lines.push(`G0 X${fmt(a[0])} Y${fmt(a[1])} F${fmt(cfg.travel_speed * 60, 1)} ; masked_body_start`);
+      } else if (i > 0) {
+        const prevEnd = bodySegments[i - 1][1];
+        if (dist(prevEnd, a) > 1e-9) lines.push(`G0 X${fmt(a[0])} Y${fmt(a[1])} F${fmt(cfg.travel_speed * 60, 1)} ; masked_body_jump`);
+      }
+      const e = dist(a, b) * crossSection / fa * cfg.extrusion_multiplier;
       estimatedE += e;
       lines.push(`G1 X${fmt(b[0])} Y${fmt(b[1])} E${fmt(e, 5)} F${fmt(xySpeed * 60, 1)} ; pct=${fmt(progressMid * 100, 2)} req_MVS=${fmt(requestedMvs, 3)} actual_MVS=${fmt(actualMvs, 3)}`);
-    }
+    });
   }
 
   lines.push("", "; ---------- end of calibration body ----------", `; estimated_total_filament_E_mm=${fmt(estimatedE, 3)}`, "", "; ---------- minimal standalone end ----------", "G92 E0", "G1 E-2 F1800", `G0 Z${fmt(totalHeight + 10)} F1200`, "M104 S0", "M140 S0", "M106 S0", "G90", "; ---------- end minimal standalone end ----------");
