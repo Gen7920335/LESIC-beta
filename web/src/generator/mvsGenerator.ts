@@ -930,14 +930,14 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
   values.forEach((value) => {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
-    const major = value % 5 === 0;
-    const outerRadius = radius - 0.5;
-    const innerRadius = radius - (major ? 4.2 : 3.0);
-    const radialDepth = Math.max(0.8, outerRadius - innerRadius);
-    const tangentialWidth = major ? 1.9 : 1.35;
+    if (value % 5 === 0) return;
+    const outerRadius = radius - 0.55;
+    const innerRadius = radius - 1.95;
+    const radialDepth = Math.max(1.2, outerRadius - innerRadius);
+    const tangentialWidth = 1.4;
     const markerRadius = (outerRadius + innerRadius) / 2;
     const anchor = pointOnCircle(cx, cy, markerRadius, angle);
-    const marker = buildOutlinedRectSegments(tangentialWidth, radialDepth);
+    const marker = buildOutlinedRectSegments(tangentialWidth, radialDepth, 0.25);
     all.push(...transformSegments(marker, angle, anchor[0], anchor[1]));
   });
 
