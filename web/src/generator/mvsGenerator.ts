@@ -93,6 +93,7 @@ const LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH;
 const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", ",", "•"]);
 const OUTER_BRIM_LINES = 1;
 const INNER_BRIM_LINES = 5;
+const RING_TICK_TANGENTIAL_WIDTH = 1.55 * 0.75;
 
 const FONT: Record<string, Point[][]> = {
   "0": [[ [0, 0], [0, 7], [5, 7], [5, 0], [0, 0], [5, 7] ]],
@@ -856,6 +857,12 @@ function buildOutlinedRectSegments(width: number, height: number, inset = LABEL_
   return [...outer, ...inner];
 }
 
+function loopToSegments(loop: Point[], kind: SegmentKind = "stroke"): TypedSegment[] {
+  const segs: TypedSegment[] = [];
+  for (let i = 0; i < loop.length - 1; i++) appendSegment(segs, loop[i], loop[i + 1], kind);
+  return segs;
+}
+
 function buildSingleLineTextSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
@@ -883,6 +890,22 @@ function buildSingleLineOutlineSegments(text: string, charH: number, xScale: num
     const x0 = xLeft + ci * advanceUnits * cell * xScale;
     const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
     all.push(...glyph.segments);
+  });
+  return all;
+}
+
+function buildSingleLineMaskSegments(text: string, charH: number, xScale: number, lineWidth: number, advanceScale = 1): TypedSegment[] {
+  if (!text.trim()) return [];
+  const cell = charH / 7;
+  const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth) * Math.max(0.1, advanceScale);
+  const width = lineWidthUnits(text, advanceUnits) * cell * xScale;
+  const xLeft = -width / 2;
+  const y0 = -charH / 2;
+  const all: TypedSegment[] = [];
+  [...text].forEach((ch, ci) => {
+    const x0 = xLeft + ci * advanceUnits * cell * xScale;
+    const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
+    all.push(...loopToSegments(glyph.outerLoop));
   });
   return all;
 }
@@ -1020,10 +1043,38 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
     const outerRadius = radius - 0.02;
     const innerRadius = radius - 3.4;
     const radialDepth = Math.max(2.6, outerRadius - innerRadius);
-    const tangentialWidth = 1.55;
+    const tangentialWidth = RING_TICK_TANGENTIAL_WIDTH;
     const markerRadius = (outerRadius + innerRadius) / 2;
     const anchor = pointOnCircle(cx, cy, markerRadius, angle);
     const marker = buildOutlinedRectSegments(tangentialWidth, radialDepth, 0.25);
+    all.push(...transformSegments(marker, angle, anchor[0], anchor[1]));
+  });
+
+  return all;
+}
+
+function buildRingMvsTickMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
+  const values: number[] = [];
+  const start = Math.ceil(cfg.mvs_min);
+  const end = Math.floor(cfg.mvs_max);
+  for (let v = start; v <= end; v += 1) values.push(v);
+  const radius = cfg.circle_diameter / 2;
+  const cx = cfg.square_x + radius;
+  const cy = cfg.square_y + radius;
+  const sign = cfg.clockwise ? -1 : 1;
+  const all: TypedSegment[] = [];
+
+  values.forEach((value) => {
+    const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+    const angle = cfg.zero_angle_deg + sign * 360 * t;
+    if (value % 5 === 0) return;
+    const outerRadius = radius - 0.02;
+    const innerRadius = radius - 3.4;
+    const radialDepth = Math.max(2.6, outerRadius - innerRadius);
+    const tangentialWidth = RING_TICK_TANGENTIAL_WIDTH;
+    const markerRadius = (outerRadius + innerRadius) / 2;
+    const anchor = pointOnCircle(cx, cy, markerRadius, angle);
+    const marker = rectLoopSegments(tangentialWidth, radialDepth);
     all.push(...transformSegments(marker, angle, anchor[0], anchor[1]));
   });
 
@@ -1054,8 +1105,36 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
   return all;
 }
 
+function buildRingMvsLabelMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
+  if (!cfg.label) return [];
+  const values = ringMvsLabelValues(cfg);
+  const charH = baseBottomLabelHeight(cfg) * 0.5;
+  const radius = cfg.circle_diameter / 2;
+  const cx = cfg.square_x + radius;
+  const cy = cfg.square_y + radius;
+  const sign = cfg.clockwise ? -1 : 1;
+  const textRadius = radius - (charH / 2) - 0.5;
+  const all: TypedSegment[] = [];
+
+  values.forEach((value) => {
+    const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+    const angle = cfg.zero_angle_deg + sign * 360 * t;
+    const anchor = pointOnCircle(cx, cy, textRadius, angle);
+    const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
+    const text = Number.isInteger(value) ? String(Math.round(value)) : fmt(value);
+    const segs = buildSingleLineMaskSegments(text, charH, cfg.label_x_scale, cfg.line_width, 1.2);
+    all.push(...transformSegments(segs, tangentDeg, anchor[0], anchor[1]));
+  });
+
+  return all;
+}
+
 function buildRingAnnotationSegments(cfg: GeneratorConfig) {
   return [...buildRingMvsTickSegments(cfg), ...buildRingMvsLabels(cfg)];
+}
+
+function buildRingAnnotationMaskSegments(cfg: GeneratorConfig) {
+  return [...buildRingMvsTickMaskSegments(cfg), ...buildRingMvsLabelMaskSegments(cfg)];
 }
 
 export function makeLabelLines(cfg: GeneratorConfig) {
@@ -1094,6 +1173,36 @@ function buildBottomLabelSegments(cfg: GeneratorConfig): TypedSegment[] {
     linesGlyphs.push(glyphs);
     glyphs.forEach((g) => all.push(...g.segments));
   });
+  return [
+    ...all,
+    ...buildInterlineRails(linesGlyphs, cell, Math.max(0, cfg.label_connector_width / 2)),
+    ...buildHullLoops(all),
+  ];
+}
+
+function buildBottomLabelMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
+  if (!cfg.label) return [];
+  const lines = makeLabelLines(cfg);
+  let charH = baseBottomLabelHeight(cfg);
+  const cell = charH / 7;
+  const lineGap = charH * 0.65;
+  const centerX = cfg.square_x + cfg.circle_diameter / 2;
+  const centerY = cfg.square_y + cfg.circle_diameter / 2;
+  const advanceUnits = labelAdvanceUnits(cell, cfg.label_x_scale, cfg.line_width);
+  const widths = lines.map((s) => lineWidthUnits(s, advanceUnits) * cell * cfg.label_x_scale);
+  const blockH = lines.length * charH + Math.max(0, lines.length - 1) * lineGap;
+  const topY = centerY + blockH / 2 - charH;
+  const all: TypedSegment[] = [];
+  const linesGlyphs: GlyphBuild[][] = [];
+
+  lines.forEach((text, li) => {
+    const y0 = topY - li * (charH + lineGap);
+    const xLeft = centerX - widths[li] / 2;
+    const glyphs = [...text].map((ch, ci) => buildGlyphGeometry(ch, xLeft + ci * advanceUnits * cell * cfg.label_x_scale, y0, cell, cfg.label_x_scale, cfg.line_width));
+    linesGlyphs.push(glyphs);
+    glyphs.forEach((g) => all.push(...loopToSegments(g.outerLoop)));
+  });
+
   return [
     ...all,
     ...buildInterlineRails(linesGlyphs, cell, Math.max(0, cfg.label_connector_width / 2)),
@@ -1150,11 +1259,14 @@ export function getPreviewData(cfg: GeneratorConfig): PreviewData {
   const cy = cfg.square_y + radius;
   const fallbackCircle = arcPoints(cx, cy, radius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
   const ringSegments = cfg.label ? buildRingAnnotationSegments(cfg) : [];
+  const ringMaskSegments = cfg.label ? buildRingAnnotationMaskSegments(cfg) : [];
   const bottomLabelSegments = cfg.label ? buildBottomLabelSegments(cfg) : [];
+  const bottomLabelMaskSegments = cfg.label ? buildBottomLabelMaskSegments(cfg) : [];
   const labelSegments = cfg.label ? [...bottomLabelSegments, ...ringSegments] : [];
+  const labelMaskSegments = cfg.label ? [...bottomLabelMaskSegments, ...ringMaskSegments] : [];
   const maskClearance = labelMaskClearance(cfg);
-  const brimSegments = filterSegmentsByObstacles(buildBrimSegments(cfg), labelSegments, maskClearance);
-  const bodySegments = filterSegmentsByObstacles(fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment), labelSegments, maskClearance);
+  const brimSegments = filterSegmentsByObstacles(buildBrimSegments(cfg), labelMaskSegments, maskClearance);
+  const bodySegments = filterSegmentsByObstacles(fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment), labelMaskSegments, maskClearance);
   return {
     bed: { x: cfg.bed_x, y: cfg.bed_y },
     square: { x: cfg.square_x, y: cfg.square_y, d: cfg.circle_diameter },
@@ -1179,8 +1291,11 @@ export function makeGcode(cfg: GeneratorConfig) {
   const totalHeight = totalLayers * cfg.layer_height;
   const pts = arcPoints(centerX, centerY, radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
   const ringSegments = cfg.label ? buildRingAnnotationSegments(cfg) : [];
+  const ringMaskSegments = cfg.label ? buildRingAnnotationMaskSegments(cfg) : [];
   const bottomLabelSegments = cfg.label ? buildBottomLabelSegments(cfg) : [];
-  const labelMaskSegments = cfg.label ? [...bottomLabelSegments, ...ringSegments] : [];
+  const bottomLabelMaskSegments = cfg.label ? buildBottomLabelMaskSegments(cfg) : [];
+  const labelPrintSegments = cfg.label ? [...bottomLabelSegments, ...ringSegments] : [];
+  const labelMaskSegments = cfg.label ? [...bottomLabelMaskSegments, ...ringMaskSegments] : [];
   const maskClearance = labelMaskClearance(cfg);
   const bodySegments = filterSegmentsByObstacles(pts.slice(1).map((p, i) => [pts[i], p, "stroke"] as TypedSegment), labelMaskSegments, maskClearance);
   const brimLoops = brimRadii(radius, cfg.line_width).map((item) => {
@@ -1247,7 +1362,7 @@ export function makeGcode(cfg: GeneratorConfig) {
   let labelEnd: Point | undefined;
   if (cfg.label) {
     emitTemperatureSet(lines, cfg, cfg.start_temp, "min");
-    const typed = labelMaskSegments;
+    const typed = labelPrintSegments;
     const labelStrokeWidth = LABEL_OUTLINE_WIDTH;
     const labelConnectorWidth = Math.max(0, cfg.label_connector_width);
     lines.push("", "; ---------- bottom inner label ----------", "; label_toolpath=glyph_outer_double_contour_plus_convex_hull", "; label_visual_layout=three_line_default", "; label_path_order=line1_LTR_line2_LTR_line3_LTR", "; label_width_mode=stroke_vs_connector", `; label_stroke_width=${fmt(labelStrokeWidth)}`, `; label_connector_width=${fmt(labelConnectorWidth)}`, "; label_inner_contours_per_glyph=2", "; label_outer_hull_passes=2", "; label_inner_contour_gap_mm=0", `; label_layout=${cfg.label_layout}`, `; label_lines=${labelLines.join(" | ")}`, `; ring_mvs_values=${ringMvsLabelValues(cfg).map((v) => fmt(v)).join(",")}`, `; label_segments_total=${typed.length}`, `; label_segments_stroke=${typed.filter((s) => s[2] === "stroke").length}`, `; label_segments_connector=${typed.filter((s) => s[2] === "connector").length}`);
