@@ -902,7 +902,12 @@ function buildSingleLineTextSegments(text: string, charH: number, xScale: number
   return all;
 }
 
-function buildSingleLineOutlineSegments(text: string, charH: number, xScale: number, lineWidth: number, advanceScale = 1): TypedSegment[] {
+function ringGlyphPrintSegments(glyph: GlyphBuild): TypedSegment[] {
+  if (glyph.outlineLoops.length > 1 && glyph.outerLoop.length) return loopToSegments(glyph.outerLoop);
+  return glyph.segments;
+}
+
+function buildSingleLineRingLabelSegments(text: string, charH: number, xScale: number, lineWidth: number, advanceScale = 1): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
   const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth) * Math.max(0.1, advanceScale);
@@ -913,7 +918,7 @@ function buildSingleLineOutlineSegments(text: string, charH: number, xScale: num
   [...text].forEach((ch, ci) => {
     const x0 = xLeft + ci * advanceUnits * cell * xScale;
     const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
-    all.push(...glyph.segments);
+    all.push(...ringGlyphPrintSegments(glyph));
   });
   return all;
 }
@@ -1124,7 +1129,7 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
     const anchor = pointOnCircle(cx, cy, textRadius, angle);
     const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
     const text = Number.isInteger(value) ? String(Math.round(value)) : fmt(value);
-    const segs = buildSingleLineOutlineSegments(text, charH, cfg.label_x_scale, cfg.line_width, 1.2);
+    const segs = buildSingleLineRingLabelSegments(text, charH, cfg.label_x_scale, cfg.line_width, 1.2);
     all.push(...transformSegments(segs, tangentDeg, anchor[0], anchor[1]));
   });
 
