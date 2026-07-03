@@ -912,17 +912,14 @@ function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }
   const pad = 18;
   const vb = `${-pad} ${-pad} ${data.bed.x + pad * 2} ${data.bed.y + pad * 2}`;
   const mapPoint = ([x, y]: [number, number]) => [x, data.bed.y - y] as const;
+  const segmentCommand = (a: readonly [number, number], b: readonly [number, number]) => `M${a[0]} ${a[1]}L${b[0]} ${b[1]}`;
   const segmentKey = (a: readonly [number, number], b: readonly [number, number]) => {
     const k1 = `${a[0].toFixed(4)},${a[1].toFixed(4)}|${b[0].toFixed(4)},${b[1].toFixed(4)}`;
     const k2 = `${b[0].toFixed(4)},${b[1].toFixed(4)}|${a[0].toFixed(4)},${a[1].toFixed(4)}`;
     return k1 < k2 ? k1 : k2;
   };
-  const circlePaths = data.circleSegments.map(([a, b], i) => {
-    const pa = mapPoint(a);
-    const pb = mapPoint(b);
-    return <line key={i} x1={pa[0]} y1={pa[1]} x2={pb[0]} y2={pb[1]} className="circleSegment" style={{ strokeWidth: cfg.line_width }} />;
-  });
-  const aggregatedLabelSegments = useMemo(() => {
+  const circlePath = useMemo(() => data.circleSegments.map(([a, b]) => segmentCommand(mapPoint(a), mapPoint(b))).join(" "), [data.circleSegments, data.bed.y]);
+  const labelPathGroups = useMemo(() => {
     const grouped = new Map<string, { a: readonly [number, number]; b: readonly [number, number]; kind: SegmentKind; count: number }>();
     data.labelSegments.forEach(([a, b, kind]) => {
       const pa = mapPoint(a);
@@ -932,20 +929,25 @@ function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }
       if (prev) prev.count += 1;
       else grouped.set(key, { a: pa, b: pb, kind, count: 1 });
     });
-    return [...grouped.values()];
-  }, [data.labelSegments]);
+    const paths = new Map<string, { kind: SegmentKind; count: number; d: string[] }>();
+    grouped.forEach(({ a, b, kind, count }) => {
+      const key = `${kind}:${count}`;
+      const path = paths.get(key);
+      if (path) path.d.push(segmentCommand(a, b));
+      else paths.set(key, { kind, count, d: [segmentCommand(a, b)] });
+    });
+    return [...paths.values()].map((path) => ({ ...path, d: path.d.join(" ") }));
+  }, [data.labelSegments, data.bed.y]);
   const labelStrokeWidth = (kind: SegmentKind, count: number) => {
     const baseWidth = kind === "connector" ? cfg.label_connector_width : LABEL_OUTLINE_WIDTH;
     return Math.max(0.01, baseWidth) * Math.max(1, count);
   };
-  const labelPaths = aggregatedLabelSegments.map(({ a, b, kind, count }, i) => (
-    <line
+  const labelPaths = labelPathGroups.map(({ d, kind, count }, i) => (
+    <path
       key={i}
-      x1={a[0]}
-      y1={a[1]}
-      x2={b[0]}
-      y2={b[1]}
+      d={d}
       className={kind}
+      fill="none"
       style={{ strokeWidth: labelStrokeWidth(kind, count) }}
     />
   ));
@@ -956,7 +958,7 @@ function Preview({ cfg, language }: { cfg: GeneratorConfig; language: Language }
       <div className="previewTitle">{t.previewTitle}</div>
       <div className="previewStage">
         <svg viewBox={vb} role="img" aria-label="MVS calibration preview">
-          <g>{circlePaths}</g>
+          <path d={circlePath} className="circleSegment" fill="none" style={{ strokeWidth: cfg.line_width }} />
           <g>{labelPaths}</g>
         </svg>
       </div>

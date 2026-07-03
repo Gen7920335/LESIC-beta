@@ -910,6 +910,15 @@ function segmentMidpoint(a: Point, b: Point): Point {
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 }
 
+function segmentBounds(a: Point, b: Point, pad = 0) {
+  return {
+    minX: Math.min(a[0], b[0]) - pad,
+    maxX: Math.max(a[0], b[0]) + pad,
+    minY: Math.min(a[1], b[1]) - pad,
+    maxY: Math.max(a[1], b[1]) + pad,
+  };
+}
+
 function segmentNearSegment(a0: Point, a1: Point, b0: Point, b1: Point, clearance: number) {
   if (segmentsIntersect(a0, a1, b0, b1)) return true;
   if (pointToSegmentDistance(a0, b0, b1) <= clearance) return true;
@@ -921,9 +930,59 @@ function segmentNearSegment(a0: Point, a1: Point, b0: Point, b1: Point, clearanc
   return false;
 }
 
+function buildObstacleGrid(obstacles: TypedSegment[], clearance: number) {
+  const cellSize = Math.max(1, clearance * 2);
+  const cells = new Map<string, TypedSegment[]>();
+  const cellKey = (x: number, y: number) => `${x},${y}`;
+
+  obstacles.forEach((segment) => {
+    const [a, b] = segment;
+    const bounds = segmentBounds(a, b, clearance);
+    const minCellX = Math.floor(bounds.minX / cellSize);
+    const maxCellX = Math.floor(bounds.maxX / cellSize);
+    const minCellY = Math.floor(bounds.minY / cellSize);
+    const maxCellY = Math.floor(bounds.maxY / cellSize);
+    for (let x = minCellX; x <= maxCellX; x++) {
+      for (let y = minCellY; y <= maxCellY; y++) {
+        const key = cellKey(x, y);
+        const list = cells.get(key);
+        if (list) list.push(segment);
+        else cells.set(key, [segment]);
+      }
+    }
+  });
+
+  return { cellSize, cells, cellKey };
+}
+
+function nearbyObstacleSegments(a: Point, b: Point, grid: ReturnType<typeof buildObstacleGrid>, clearance: number) {
+  const bounds = segmentBounds(a, b, clearance);
+  const minCellX = Math.floor(bounds.minX / grid.cellSize);
+  const maxCellX = Math.floor(bounds.maxX / grid.cellSize);
+  const minCellY = Math.floor(bounds.minY / grid.cellSize);
+  const maxCellY = Math.floor(bounds.maxY / grid.cellSize);
+  const found = new Set<TypedSegment>();
+
+  for (let x = minCellX; x <= maxCellX; x++) {
+    for (let y = minCellY; y <= maxCellY; y++) {
+      const list = grid.cells.get(grid.cellKey(x, y));
+      if (list) list.forEach((segment) => found.add(segment));
+    }
+  }
+
+  return found;
+}
+
 function filterSegmentsByObstacles(segments: TypedSegment[], obstacles: TypedSegment[], clearance: number) {
   if (!obstacles.length) return segments;
-  return segments.filter(([a, b]) => !obstacles.some(([p0, p1]) => segmentNearSegment(a, b, p0, p1, clearance)));
+  const grid = buildObstacleGrid(obstacles, clearance);
+  return segments.filter(([a, b]) => {
+    const candidates = nearbyObstacleSegments(a, b, grid, clearance);
+    for (const [p0, p1] of candidates) {
+      if (segmentNearSegment(a, b, p0, p1, clearance)) return false;
+    }
+    return true;
+  });
 }
 
 const LABEL_MASK_EXTRA_CLEARANCE = 0.02;
@@ -1124,17 +1183,17 @@ export function makeGcode(cfg: GeneratorConfig) {
   const labelMaskSegments = cfg.label ? [...bottomLabelSegments, ...ringSegments] : [];
   const maskClearance = labelMaskClearance(cfg);
   const bodySegments = filterSegmentsByObstacles(pts.slice(1).map((p, i) => [pts[i], p, "stroke"] as TypedSegment), labelMaskSegments, maskClearance);
-  const brimLoops = brimRadii(radius, cfg.line_width).map((item) => ({
-    ...item,
-    segments: filterSegmentsByObstacles(
-      arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise).slice(1).map((p, i, arr) => {
-        const allPts = arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
-        return [allPts[i], p, "stroke"] as TypedSegment;
-      }),
-      labelMaskSegments,
-      maskClearance,
-    ),
-  }));
+  const brimLoops = brimRadii(radius, cfg.line_width).map((item) => {
+    const brimPoints = arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
+    return {
+      ...item,
+      segments: filterSegmentsByObstacles(
+        brimPoints.slice(1).map((p, i) => [brimPoints[i], p, "stroke"] as TypedSegment),
+        labelMaskSegments,
+        maskClearance,
+      ),
+    };
+  });
   const labelLines = makeLabelLines(cfg);
   const lines: string[] = [
     ...lesicMetadataBlock(cfg, totalLayers, totalHeight),
