@@ -926,6 +926,8 @@ function filterSegmentsByObstacles(segments: TypedSegment[], obstacles: TypedSeg
   return segments.filter(([a, b]) => !obstacles.some(([p0, p1]) => segmentNearSegment(a, b, p0, p1, clearance)));
 }
 
+const RING_MASK_CLEARANCE = 0.02;
+
 function ringMvsLabelValues(cfg: GeneratorConfig) {
   const values: number[] = [cfg.mvs_min];
   const startMultiple = Math.ceil(cfg.mvs_min / 5) * 5;
@@ -951,10 +953,10 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
     if (value % 5 === 0) return;
-    const outerRadius = radius - 0.55;
-    const innerRadius = radius - 1.95;
-    const radialDepth = Math.max(1.2, outerRadius - innerRadius);
-    const tangentialWidth = 1.4;
+    const outerRadius = radius - 0.02;
+    const innerRadius = radius - 3.4;
+    const radialDepth = Math.max(2.6, outerRadius - innerRadius);
+    const tangentialWidth = 1.55;
     const markerRadius = (outerRadius + innerRadius) / 2;
     const anchor = pointOnCircle(cx, cy, markerRadius, angle);
     const marker = buildOutlinedRectSegments(tangentialWidth, radialDepth, 0.25);
@@ -1084,8 +1086,8 @@ export function getPreviewData(cfg: GeneratorConfig): PreviewData {
   const cy = cfg.square_y + radius;
   const fallbackCircle = arcPoints(cx, cy, radius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
   const ringSegments = cfg.label ? buildRingAnnotationSegments(cfg) : [];
-  const brimSegments = filterSegmentsByObstacles(buildBrimSegments(cfg), ringSegments, 0.12);
-  const bodySegments = filterSegmentsByObstacles(fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment), ringSegments, 0.12);
+  const brimSegments = filterSegmentsByObstacles(buildBrimSegments(cfg), ringSegments, RING_MASK_CLEARANCE);
+  const bodySegments = filterSegmentsByObstacles(fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment), ringSegments, RING_MASK_CLEARANCE);
   const labelSegments = cfg.label ? [...buildBottomLabelSegments(cfg), ...ringSegments] : [];
   return {
     bed: { x: cfg.bed_x, y: cfg.bed_y },
@@ -1111,7 +1113,7 @@ export function makeGcode(cfg: GeneratorConfig) {
   const totalHeight = totalLayers * cfg.layer_height;
   const pts = arcPoints(centerX, centerY, radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
   const ringSegments = cfg.label ? buildRingAnnotationSegments(cfg) : [];
-  const bodySegments = filterSegmentsByObstacles(pts.slice(1).map((p, i) => [pts[i], p, "stroke"] as TypedSegment), ringSegments, 0.12);
+  const bodySegments = filterSegmentsByObstacles(pts.slice(1).map((p, i) => [pts[i], p, "stroke"] as TypedSegment), ringSegments, RING_MASK_CLEARANCE);
   const brimLoops = brimRadii(radius, cfg.line_width).map((item) => ({
     ...item,
     segments: filterSegmentsByObstacles(
@@ -1120,7 +1122,7 @@ export function makeGcode(cfg: GeneratorConfig) {
         return [allPts[i], p, "stroke"] as TypedSegment;
       }),
       ringSegments,
-      0.12,
+      RING_MASK_CLEARANCE,
     ),
   }));
   const labelLines = makeLabelLines(cfg);
