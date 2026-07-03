@@ -90,7 +90,7 @@ const LABEL_TEXT_WIDTH = 1.0;
 export const LABEL_OUTLINE_WIDTH = 0.25;
 const LABEL_INNER_OUTLINE_RADIUS = LABEL_TEXT_WIDTH / 2 + LABEL_OUTLINE_WIDTH / 2;
 const LABEL_OUTER_RADIUS = LABEL_INNER_OUTLINE_RADIUS + LABEL_OUTLINE_WIDTH;
-const NO_INNER_LOOP_BRIDGE_CHARS = new Set([":", ".", ",", "•"]);
+const NO_INNER_LOOP_BRIDGE_CHARS = new Set(["0", ":", ".", ",", "•"]);
 const OUTER_BRIM_LINES = 1;
 const INNER_BRIM_LINES = 5;
 const RING_TICK_TANGENTIAL_WIDTH = 1.55 * 0.75;
@@ -589,12 +589,53 @@ type GlyphBuild = {
   bbox: { minX: number; maxX: number; minY: number; maxY: number };
 };
 
+function rectangleLoop(minX: number, maxX: number, minY: number, maxY: number): Point[] {
+  return [[minX, minY], [minX, maxY], [maxX, maxY], [maxX, minY], [minX, minY]];
+}
+
+function buildZeroGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xScale: number): GlyphBuild {
+  const minX = x0;
+  const maxX = x0 + 5 * cell * xScale;
+  const minY = y0;
+  const maxY = y0 + 7 * cell;
+  const all: TypedSegment[] = [];
+  const outerLoop = rectangleLoop(
+    minX - LABEL_OUTER_RADIUS,
+    maxX + LABEL_OUTER_RADIUS,
+    minY - LABEL_OUTER_RADIUS,
+    maxY + LABEL_OUTER_RADIUS,
+  );
+  const innerLoop = maxX - minX > LABEL_INNER_OUTLINE_RADIUS * 2 && maxY - minY > LABEL_INNER_OUTLINE_RADIUS * 2
+    ? rectangleLoop(
+      minX + LABEL_INNER_OUTLINE_RADIUS,
+      maxX - LABEL_INNER_OUTLINE_RADIUS,
+      minY + LABEL_INNER_OUTLINE_RADIUS,
+      maxY - LABEL_INNER_OUTLINE_RADIUS,
+    )
+    : [];
+  all.push(...loopToSegments(outerLoop));
+  if (innerLoop.length) all.push(...loopToSegments(innerLoop));
+  const innerLoops = innerLoop.length ? [innerLoop] : [];
+  const outlineLoops = innerLoop.length ? [outerLoop, innerLoop] : [outerLoop];
+
+  return {
+    char: ch,
+    segments: all,
+    outerLoop,
+    innerLoops,
+    outlineLoops,
+    sourcePoints: rectangleLoop(minX, maxX, minY, maxY),
+    bbox: { minX, maxX, minY, maxY },
+  };
+}
+
 function buildGlyphGeometry(ch: string, x0: number, y0: number, cell: number, xScale: number, lineWidth: number): GlyphBuild {
   const centerlines = buildGlyphCenterlines(ch, x0, y0, cell, xScale);
   const sourcePoints = glyphSourcePoints(ch, x0, y0, cell, xScale);
   if (!centerlines.length || !sourcePoints.length) {
     return { char: ch, segments: [], outerLoop: [], innerLoops: [], outlineLoops: [], sourcePoints: [], bbox: { minX: x0, maxX: x0, minY: y0, maxY: y0 } };
   }
+  if (ch === "0") return buildZeroGlyphGeometry(ch, x0, y0, cell, xScale);
 
   const points = centerlines.flatMap(([a, b]) => [a, b]);
   const minX = Math.min(...points.map((p) => p[0]));
@@ -863,6 +904,16 @@ function loopToSegments(loop: Point[], kind: SegmentKind = "stroke"): TypedSegme
   return segs;
 }
 
+function filledLoopMaskSegments(loop: Point[], spacing: number): TypedSegment[] {
+  if (loop.length < 4 || spacing <= 0) return [];
+  const bounds = loopBounds(loop);
+  const segs: TypedSegment[] = [];
+  for (let y = bounds.minY; y <= bounds.maxY + 1e-9; y += spacing) {
+    appendSegment(segs, [bounds.minX, y], [bounds.maxX, y], "stroke");
+  }
+  return segs;
+}
+
 function buildSingleLineTextSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
@@ -906,6 +957,7 @@ function buildSingleLineMaskSegments(text: string, charH: number, xScale: number
     const x0 = xLeft + ci * advanceUnits * cell * xScale;
     const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
     all.push(...loopToSegments(glyph.outerLoop));
+    if (ch === "0") all.push(...filledLoopMaskSegments(glyph.outerLoop, Math.max(0.15, cell * 0.35)));
   });
   return all;
 }
@@ -1025,6 +1077,14 @@ function ringMvsLabelValues(cfg: GeneratorConfig) {
   return values;
 }
 
+function ringMvsLabelPhase(value: number, cfg: GeneratorConfig, charH: number, textRadius: number) {
+  const phase = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+  if (Math.abs(phase - 1) > 1e-9 || Math.abs(value - cfg.mvs_max) > 1e-9) return phase;
+  const circumference = 2 * Math.PI * Math.max(1, textRadius);
+  const endpointInset = Math.min(0.12, Math.max(0.06, (charH * 2.8) / circumference));
+  return 1 - endpointInset;
+}
+
 function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
   const values: number[] = [];
   const start = Math.ceil(cfg.mvs_min);
@@ -1093,7 +1153,7 @@ function buildRingMvsLabels(cfg: GeneratorConfig): TypedSegment[] {
   const all: TypedSegment[] = [];
 
   values.forEach((value) => {
-    const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+    const t = ringMvsLabelPhase(value, cfg, charH, textRadius);
     const angle = cfg.zero_angle_deg + sign * 360 * t;
     const anchor = pointOnCircle(cx, cy, textRadius, angle);
     const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
@@ -1117,7 +1177,7 @@ function buildRingMvsLabelMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
   const all: TypedSegment[] = [];
 
   values.forEach((value) => {
-    const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
+    const t = ringMvsLabelPhase(value, cfg, charH, textRadius);
     const angle = cfg.zero_angle_deg + sign * 360 * t;
     const anchor = pointOnCircle(cx, cy, textRadius, angle);
     const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
@@ -1200,7 +1260,10 @@ function buildBottomLabelMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
     const xLeft = centerX - widths[li] / 2;
     const glyphs = [...text].map((ch, ci) => buildGlyphGeometry(ch, xLeft + ci * advanceUnits * cell * cfg.label_x_scale, y0, cell, cfg.label_x_scale, cfg.line_width));
     linesGlyphs.push(glyphs);
-    glyphs.forEach((g) => all.push(...loopToSegments(g.outerLoop)));
+    glyphs.forEach((g) => {
+      all.push(...loopToSegments(g.outerLoop));
+      if (g.char === "0") all.push(...filledLoopMaskSegments(g.outerLoop, Math.max(0.15, cell * 0.35)));
+    });
   });
 
   return [
