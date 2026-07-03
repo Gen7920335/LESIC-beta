@@ -1051,6 +1051,7 @@ function ringMvsLabelValues(cfg: GeneratorConfig) {
   const startMultiple = Math.ceil(cfg.mvs_min / 5) * 5;
   for (let v = startMultiple; v <= cfg.mvs_max + 1e-9; v += 5) {
     if (Math.abs(v - cfg.mvs_min) < 1e-9) continue;
+    if (Math.abs(v - cfg.mvs_max) < 1e-9) continue;
     values.push(v);
   }
   return values;
