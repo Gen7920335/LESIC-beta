@@ -863,6 +863,30 @@ function loopToSegments(loop: Point[], kind: SegmentKind = "stroke"): TypedSegme
   return segs;
 }
 
+function filledLoopInteriorSegments(loop: Point[], spacing: number): TypedSegment[] {
+  if (loop.length < 4 || spacing <= 0) return [];
+  const bounds = loopBounds(loop);
+  const segs: TypedSegment[] = [];
+  for (let y = bounds.minY; y <= bounds.maxY + 1e-9; y += spacing) {
+    const xs: number[] = [];
+    for (let i = 0; i < loop.length - 1; i++) {
+      const a = loop[i];
+      const b = loop[i + 1];
+      if (Math.abs(a[1] - b[1]) <= 1e-9) continue;
+      const minY = Math.min(a[1], b[1]);
+      const maxY = Math.max(a[1], b[1]);
+      if (y < minY || y >= maxY) continue;
+      const t = (y - a[1]) / (b[1] - a[1]);
+      xs.push(a[0] + (b[0] - a[0]) * t);
+    }
+    xs.sort((a, b) => a - b);
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      appendSegment(segs, [xs[i], y], [xs[i + 1], y], "stroke");
+    }
+  }
+  return segs;
+}
+
 function buildSingleLineTextSegments(text: string, charH: number, xScale: number, lineWidth: number): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
@@ -894,7 +918,7 @@ function buildSingleLineOutlineSegments(text: string, charH: number, xScale: num
   return all;
 }
 
-function buildSingleLineMaskSegments(text: string, charH: number, xScale: number, lineWidth: number, advanceScale = 1): TypedSegment[] {
+function buildSingleLineRingMaskSegments(text: string, charH: number, xScale: number, lineWidth: number, advanceScale = 1): TypedSegment[] {
   if (!text.trim()) return [];
   const cell = charH / 7;
   const advanceUnits = labelAdvanceUnits(cell, xScale, lineWidth) * Math.max(0.1, advanceScale);
@@ -902,10 +926,12 @@ function buildSingleLineMaskSegments(text: string, charH: number, xScale: number
   const xLeft = -width / 2;
   const y0 = -charH / 2;
   const all: TypedSegment[] = [];
+  const fillSpacing = Math.max(0.12, Math.min(0.2, cell * 0.3));
   [...text].forEach((ch, ci) => {
     const x0 = xLeft + ci * advanceUnits * cell * xScale;
     const glyph = buildGlyphGeometry(ch, x0, y0, cell, xScale, lineWidth);
-    all.push(...loopToSegments(glyph.outerLoop));
+    all.push(...glyph.segments);
+    glyph.outlineLoops.forEach((loop) => all.push(...filledLoopInteriorSegments(loop, fillSpacing)));
   });
   return all;
 }
@@ -1122,7 +1148,7 @@ function buildRingMvsLabelMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
     const anchor = pointOnCircle(cx, cy, textRadius, angle);
     const tangentDeg = angle + (cfg.clockwise ? -90 : 90);
     const text = Number.isInteger(value) ? String(Math.round(value)) : fmt(value);
-    const segs = buildSingleLineMaskSegments(text, charH, cfg.label_x_scale, cfg.line_width, 1.2);
+    const segs = buildSingleLineRingMaskSegments(text, charH, cfg.label_x_scale, cfg.line_width, 1.2);
     all.push(...transformSegments(segs, tangentDeg, anchor[0], anchor[1]));
   });
 
