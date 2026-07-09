@@ -1040,7 +1040,7 @@ function filterSegmentsByObstacles(segments: TypedSegment[], obstacles: TypedSeg
 }
 
 const LABEL_MASK_EXTRA_CLEARANCE = 0.02;
-const RING_LABEL_MASK_EXTRA_CLEARANCE = 4.0;
+const RING_LABEL_MASK_EXTRA_CLEARANCE = 0;
 
 function labelMaskClearance(cfg: GeneratorConfig) {
   const labelWidth = Math.max(LABEL_OUTLINE_WIDTH, cfg.label_connector_width);
@@ -1076,7 +1076,7 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
   values.forEach((value) => {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
-    if (value % 5 === 0) return;
+    if (t <= 1e-9 || value % 5 === 0) return;
     const outerRadius = radius - 0.02;
     const innerRadius = radius - 3.4;
     const radialDepth = Math.max(2.6, outerRadius - innerRadius);
@@ -1104,7 +1104,7 @@ function buildRingMvsTickMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
   values.forEach((value) => {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
-    if (value % 5 === 0) return;
+    if (t <= 1e-9 || value % 5 === 0) return;
     const outerRadius = radius - 0.02;
     const innerRadius = radius - 3.4;
     const radialDepth = Math.max(2.6, outerRadius - innerRadius);
