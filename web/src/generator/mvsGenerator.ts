@@ -954,7 +954,7 @@ function buildBrimSegments(cfg: GeneratorConfig): TypedSegment[] {
   const cy = cfg.square_y + radius;
   const all: TypedSegment[] = [];
   brimRadii(radius, cfg.line_width).forEach(({ radius: brimRadius }) => {
-    const pts = arcPoints(cx, cy, brimRadius, Math.max(12, cfg.arc_segments), cfg.zero_angle_deg, cfg.clockwise);
+    const pts = arcPoints(cx, cy, brimRadius, brimArcSegments(cfg), cfg.zero_angle_deg, cfg.clockwise);
     pts.slice(1).forEach((p, i) => appendSegment(all, pts[i], p, "stroke"));
   });
   return all;
@@ -1040,15 +1040,17 @@ function filterSegmentsByObstacles(segments: TypedSegment[], obstacles: TypedSeg
 }
 
 const LABEL_MASK_EXTRA_CLEARANCE = 0.02;
-const RING_LABEL_MASK_EXTRA_CLEARANCE = 0;
-
 function labelMaskClearance(cfg: GeneratorConfig) {
   const labelWidth = Math.max(LABEL_OUTLINE_WIDTH, cfg.label_connector_width);
   return cfg.line_width / 2 + labelWidth / 2 + LABEL_MASK_EXTRA_CLEARANCE;
 }
 
 function ringLabelMaskClearance(cfg: GeneratorConfig) {
-  return labelMaskClearance(cfg) + RING_LABEL_MASK_EXTRA_CLEARANCE;
+  return labelMaskClearance(cfg);
+}
+
+function brimArcSegments(cfg: GeneratorConfig) {
+  return Math.max(1440, cfg.arc_segments * 8);
 }
 
 function ringMvsLabelValues(cfg: GeneratorConfig) {
@@ -1076,7 +1078,7 @@ function buildRingMvsTickSegments(cfg: GeneratorConfig): TypedSegment[] {
   values.forEach((value) => {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
-    if (t <= 1e-9 || value % 5 === 0) return;
+    if (t <= 1e-9 || t >= 1 - 1e-9 || value % 5 === 0) return;
     const outerRadius = radius - 0.02;
     const innerRadius = radius - 3.4;
     const radialDepth = Math.max(2.6, outerRadius - innerRadius);
@@ -1104,7 +1106,7 @@ function buildRingMvsTickMaskSegments(cfg: GeneratorConfig): TypedSegment[] {
   values.forEach((value) => {
     const t = cfg.mvs_max > cfg.mvs_min ? (value - cfg.mvs_min) / (cfg.mvs_max - cfg.mvs_min) : 0;
     const angle = cfg.zero_angle_deg + sign * 360 * t;
-    if (t <= 1e-9 || value % 5 === 0) return;
+    if (t <= 1e-9 || t >= 1 - 1e-9 || value % 5 === 0) return;
     const outerRadius = radius - 0.02;
     const innerRadius = radius - 3.4;
     const radialDepth = Math.max(2.6, outerRadius - innerRadius);
@@ -1303,12 +1305,12 @@ export function getPreviewData(cfg: GeneratorConfig): PreviewData {
   const labelSegments = cfg.label ? [...bottomLabelSegments, ...ringSegments] : [];
   const maskClearance = labelMaskClearance(cfg);
   const ringClearance = ringLabelMaskClearance(cfg);
-  const filterLabelCollisions = (segments: TypedSegment[]) => {
+  const filterLabelCollisions = (segments: TypedSegment[], labelClearance = ringClearance) => {
     const withoutBottom = filterSegmentsByObstacles(segments, bottomLabelMaskSegments, maskClearance);
     const withoutTicks = filterSegmentsByObstacles(withoutBottom, ringTickMaskSegments, maskClearance);
-    return filterSegmentsByObstacles(withoutTicks, ringLabelMaskSegments, ringClearance);
+    return filterSegmentsByObstacles(withoutTicks, ringLabelMaskSegments, labelClearance);
   };
-  const brimSegments = filterLabelCollisions(buildBrimSegments(cfg));
+  const brimSegments = filterLabelCollisions(buildBrimSegments(cfg), 0);
   const bodySegments = filterLabelCollisions(fallbackCircle.slice(1).map((p, i) => [fallbackCircle[i], p, "stroke"] as TypedSegment));
   return {
     bed: { x: cfg.bed_x, y: cfg.bed_y },
@@ -1341,17 +1343,17 @@ export function makeGcode(cfg: GeneratorConfig) {
   const labelPrintSegments = cfg.label ? [...bottomLabelSegments, ...ringSegments] : [];
   const maskClearance = labelMaskClearance(cfg);
   const ringClearance = ringLabelMaskClearance(cfg);
-  const filterLabelCollisions = (segments: TypedSegment[]) => {
+  const filterLabelCollisions = (segments: TypedSegment[], labelClearance = ringClearance) => {
     const withoutBottom = filterSegmentsByObstacles(segments, bottomLabelMaskSegments, maskClearance);
     const withoutTicks = filterSegmentsByObstacles(withoutBottom, ringTickMaskSegments, maskClearance);
-    return filterSegmentsByObstacles(withoutTicks, ringLabelMaskSegments, ringClearance);
+    return filterSegmentsByObstacles(withoutTicks, ringLabelMaskSegments, labelClearance);
   };
   const bodySegments = filterLabelCollisions(pts.slice(1).map((p, i) => [pts[i], p, "stroke"] as TypedSegment));
   const brimLoops = brimRadii(radius, cfg.line_width).map((item) => {
-    const brimPoints = arcPoints(centerX, centerY, item.radius, cfg.arc_segments, cfg.zero_angle_deg, cfg.clockwise);
+    const brimPoints = arcPoints(centerX, centerY, item.radius, brimArcSegments(cfg), cfg.zero_angle_deg, cfg.clockwise);
     return {
       ...item,
-      segments: filterLabelCollisions(brimPoints.slice(1).map((p, i) => [brimPoints[i], p, "stroke"] as TypedSegment)),
+      segments: filterLabelCollisions(brimPoints.slice(1).map((p, i) => [brimPoints[i], p, "stroke"] as TypedSegment), 0),
     };
   });
   const labelLines = makeLabelLines(cfg);
