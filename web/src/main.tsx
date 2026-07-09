@@ -21,6 +21,7 @@ import "./styles.css";
 const presets = presetsJson as Record<string, PrinterPreset>;
 const presetNames = Object.keys(presets).sort();
 const nozzleOptions = [0.8, 0.6, 0.4, 0.25, 0.2, 0.15] as const;
+const filamentTypeOptions = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "PVA", "HIPS", "PLA-CF", "PETG-CF", "PA-CF", "PC-CF"] as const;
 const optimalLineWidthByNozzle: Record<number, number> = {
   0.8: 0.96,
   0.6: 0.72,
@@ -188,6 +189,8 @@ type Draft = {
   output: string;
   printer_preset: string;
   firmware_mode: FirmwareMode;
+  filament_brand: string;
+  filament_type: string;
   filament_name: string;
   nozzle_size: number;
   start_temp: number;
@@ -226,6 +229,24 @@ type Draft = {
 
 const defaultPreset = presetNames.includes("SNAPMAKER_U1") ? "SNAPMAKER_U1" : presetNames[0];
 const autoOutputFields: Array<keyof Draft> = ["printer_preset", "start_temp", "end_temp", "mvs_min", "mvs_max"];
+
+function normalizeFilamentType(value: string) {
+  const normalized = value.trim().toUpperCase().replace(/\s+/g, "-");
+  return filamentTypeOptions.includes(normalized as (typeof filamentTypeOptions)[number]) ? normalized : "PLA";
+}
+
+function filamentNameFromParts(brand: string, type: string) {
+  const safeBrand = brand.trim();
+  const safeType = normalizeFilamentType(type);
+  return safeBrand ? `${safeBrand}_${safeType}` : safeType;
+}
+
+function brandFromLegacyFilamentName(value: string, type: string) {
+  const safeType = normalizeFilamentType(type);
+  const pattern = new RegExp(`[_\\s-]*${safeType}$`, "i");
+  const brand = value.trim().replace(pattern, "").replace(/[_\s-]+$/g, "");
+  return brand || value.trim() || initialDraft.filament_brand;
+}
 
 function fileTextToken(value: string) {
   return value
@@ -352,12 +373,17 @@ function draftFromMetadata(data: Record<string, unknown>) {
   const presetName = stringFromMetadata(data, "printer_preset", defaultPreset);
   const printerPreset = presets[presetName] ? presetName : defaultPreset;
   const nozzleSize = numberFromMetadata(data, "nozzle_size", initialDraft.nozzle_size);
+  const legacyFilamentName = stringFromMetadata(data, "filament_name", initialDraft.filament_name);
+  const filamentType = normalizeFilamentType(stringFromMetadata(data, "filament_type", legacyFilamentName));
+  const filamentBrand = stringFromMetadata(data, "filament_brand", "").trim() || brandFromLegacyFilamentName(legacyFilamentName, filamentType);
   const next: Draft = {
     ...initialDraft,
     output: stringFromMetadata(data, "output"),
     printer_preset: printerPreset,
     firmware_mode: isFirmwareMode(data.firmware_mode) ? data.firmware_mode : inferFirmwareMode(printerPreset),
-    filament_name: stringFromMetadata(data, "filament_name", initialDraft.filament_name),
+    filament_brand: filamentBrand,
+    filament_type: filamentType,
+    filament_name: filamentNameFromParts(filamentBrand, filamentType),
     nozzle_size: nozzleSize,
     start_temp: numberFromMetadata(data, "start_temp", initialDraft.start_temp),
     end_temp: numberFromMetadata(data, "end_temp", initialDraft.end_temp),
@@ -399,7 +425,9 @@ const initialDraft: Draft = {
   output: "U1_210_165__08_24.gcode",
   printer_preset: defaultPreset,
   firmware_mode: inferFirmwareMode(defaultPreset),
-  filament_name: "Unknown_pla",
+  filament_brand: "Unknown",
+  filament_type: "PLA",
+  filament_name: "Unknown_PLA",
   nozzle_size: 0.4,
   start_temp: 210,
   end_temp: 165,
@@ -456,6 +484,8 @@ function buildConfig(draft: Draft): GeneratorConfig {
     output: draft.output || autoOutputName(draft),
     printer_name: printerName,
     source: preset.source ?? "",
+    filament_type: normalizeFilamentType(draft.filament_type),
+    filament_name: filamentNameFromParts(draft.filament_brand, draft.filament_type),
     nozzle_size: draft.nozzle_size,
     line_width: optimalLineWidth(draft.nozzle_size),
     bed_x: bedX,
@@ -490,6 +520,8 @@ function App() {
         printerPreset: "기종 프리셋",
         firmwareMode: "펌웨어",
         nozzleSize: "노즐 구경",
+        filamentBrand: "필라멘트 브랜드",
+        filamentType: "필라멘트 재질",
         filamentName: "필라멘트 이름",
         startTemp: "시작 온도",
         endTemp: "종료 온도",
@@ -516,6 +548,8 @@ function App() {
         printerPreset: "Printer preset",
         firmwareMode: "Firmware",
         nozzleSize: "Nozzle size",
+        filamentBrand: "Filament brand",
+        filamentType: "Filament material",
         filamentName: "Filament name",
         startTemp: "Start temp",
         endTemp: "End temp",
@@ -543,6 +577,8 @@ function App() {
         printerPreset: "프린터별 베드 크기, 기본 이동 방식, 출력 조건의 기준값을 불러옵니다.",
         firmwareMode: "생성할 G-code가 따를 펌웨어 문법입니다. 보통 프리셋에 맞춰 자동으로 정해집니다.",
         nozzleSize: "노즐 구경을 고르면 적층 높이와 원형 테스트 선폭이 그 구경에 맞게 자동 적용됩니다.",
+        filamentBrand: "라벨에 들어갈 브랜드/프로파일 이름입니다. 기기 필라멘트 타입 판정에는 쓰지 않습니다.",
+        filamentType: "Bambu 3MF 내부 filament_type에 들어갈 재질입니다. 기기의 필라멘트 불일치 판정에 직접 영향이 있습니다.",
         filamentName: "바닥 라벨 첫 줄에 들어갈 재질 또는 프로파일 이름입니다.",
         startTemp: "테스트 시작 지점의 노즐 온도입니다.",
         endTemp: "테스트가 끝나는 지점의 노즐 온도입니다. 실제 밴드 수는 간격과 높이로 계산됩니다.",
@@ -569,6 +605,8 @@ function App() {
         printerPreset: "Loads printer-specific defaults such as bed size, motion style, and base output assumptions.",
         firmwareMode: "Selects the G-code dialect to emit. This is usually inferred from the printer preset.",
         nozzleSize: "Choosing a nozzle updates layer height and the circular test line width automatically.",
+        filamentBrand: "Brand/profile text for the label. This is not used for the printer filament-type check.",
+        filamentType: "Material written into Bambu 3MF filament_type. This is what the printer compares against the loaded filament type.",
         filamentName: "Material or profile name printed in the first line of the bottom label.",
         startTemp: "Nozzle temperature at the start of the test.",
         endTemp: "Nozzle temperature at the end of the test. Actual band count is computed from step and height.",
@@ -731,7 +769,8 @@ function App() {
                 }));
               }}
             />
-            <TextField label={uiLabels.filamentName} description={t.filamentNameDesc} detail={uiHelp.filamentName} closeLabel={helpCloseLabel} value={draft.filament_name} onChange={(v) => update("filament_name", v)} />
+            <TextField label={uiLabels.filamentBrand} description={language === "ko" ? "라벨/프로파일용 브랜드명" : "Brand/profile name for the label"} detail={uiHelp.filamentBrand} closeLabel={helpCloseLabel} value={draft.filament_brand} onChange={(v) => update("filament_brand", v)} />
+            <Select label={uiLabels.filamentType} description={language === "ko" ? "기기가 비교하는 실제 재질 타입" : "Material type checked by the printer"} detail={uiHelp.filamentType} closeLabel={helpCloseLabel} value={draft.filament_type} options={filamentTypeOptions.map((v) => ({ value: v, label: v }))} onChange={(v) => update("filament_type", v)} />
           </Fieldset>
 
           <Fieldset title={t.temperature}>

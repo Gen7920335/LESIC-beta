@@ -25,6 +25,8 @@ export type GeneratorConfig = {
   printer_preset: string;
   printer_name: string;
   source: string;
+  filament_brand: string;
+  filament_type: string;
   filament_name: string;
   nozzle_size: number;
   bed_x: number;
@@ -182,6 +184,8 @@ export function lesicMetadataBlock(cfg: GeneratorConfig, totalLayers = cfg.bands
     printer_preset: cfg.printer_preset,
     printer_name: cfg.printer_name,
     firmware_mode: cfg.firmware_mode,
+    filament_brand: cfg.filament_brand,
+    filament_type: cfg.filament_type,
     filament_name: cfg.filament_name,
     nozzle_size: cfg.nozzle_size,
     start_temp: cfg.start_temp,
@@ -1180,13 +1184,14 @@ function buildRingAnnotationMaskSegments(cfg: GeneratorConfig) {
 
 export function makeLabelLines(cfg: GeneratorConfig) {
   const layerHeightText = fmt(cfg.layer_height);
+  const filamentLabel = cfg.filament_brand.trim() ? `${cfg.filament_brand}/${cfg.filament_type}` : cfg.filament_type;
   if (cfg.label_layout === "one-line") {
     return [
-      `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C×${cfg.layers_per_band}×${layerHeightText}mm MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
+      `${cfg.printer_name}/${filamentLabel}/ND ${fmt(cfg.nozzle_size, 2)}mm start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C×${cfg.layers_per_band}×${layerHeightText}mm MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
     ];
   }
   return [
-    `${cfg.printer_name}/${cfg.filament_name}/ND ${fmt(cfg.nozzle_size, 2)}mm`,
+    `${cfg.printer_name}/${filamentLabel}/ND ${fmt(cfg.nozzle_size, 2)}mm`,
     `start:${fmt(cfg.start_temp)}°C/dec:-${fmt(cfg.temp_step)}°C×${cfg.layers_per_band}×${layerHeightText}mm`,
     `MAX MVS:${fmt(cfg.mvs_max)}mm³/s`,
   ];
@@ -1369,6 +1374,8 @@ export function makeGcode(cfg: GeneratorConfig) {
     `; printer_preset=${cfg.printer_preset}`,
     `; printer_name=${cfg.printer_name}`,
     `; preset_source=${cfg.source}`,
+    `; filament_brand=${cfg.filament_brand}`,
+    `; filament_type=${cfg.filament_type}`,
     `; filament_name=${cfg.filament_name}`,
     `; nozzle_size=${fmt(cfg.nozzle_size)}`,
     `; bed_x=${fmt(cfg.bed_x)}`,

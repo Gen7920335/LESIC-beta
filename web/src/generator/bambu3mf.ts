@@ -135,12 +135,18 @@ function insertMetadataIntoPrefix(prefix: string, cfg: GeneratorConfig, totalLay
 }
 
 function patchTemplatePrefix(prefix: string, cfg: GeneratorConfig, totalLayers: number, totalHeight: number) {
+  const filament = bambuFilamentMetadata(cfg);
   return patchG29Footprint(prefix, cfg)
     .replace(/(; total layer number:\s*)\d+/i, `$1${totalLayers}`)
     .replace(/(; max_z_height:\s*)[-+]?\d*\.?\d+/i, `$1${fmt(totalHeight)}`)
     .replace(/(; layer_height =\s*)[-+]?\d*\.?\d+/gi, `$1${fmt(cfg.layer_height)}`)
     .replace(/(; initial_layer_print_height =\s*)[-+]?\d*\.?\d+/gi, `$1${fmt(cfg.layer_height)}`)
-    .replace(/(; nozzle_diameter =\s*)[-+]?\d*\.?\d+(?:,[-+]?\d*\.?\d+)*/gi, `$1${fmt(cfg.nozzle_size)}`);
+    .replace(/(; nozzle_diameter =\s*)[-+]?\d*\.?\d+(?:,[-+]?\d*\.?\d+)*/gi, `$1${fmt(cfg.nozzle_size)}`)
+    .replace(/(; default_filament_profile =\s*)"[^"]*"/gi, `$1"${filament.profile}"`)
+    .replace(/(; filament_settings_id =\s*)"[^"]*"/gi, `$1"${filament.profile}"`)
+    .replace(/(; filament_type =\s*)[A-Za-z0-9_-]+/gi, `$1${filament.type}`)
+    .replace(/(; filament_vendor =\s*)"[^"]*"/gi, `$1"${filament.vendor}"`)
+    .replace(/(M1002\s+set_filament_type:)[A-Za-z0-9_-]+/gi, `$1${filament.type}`);
 }
 
 function patchTemplateSuffix(suffix: string, totalHeight: number) {
@@ -297,9 +303,14 @@ function patchProjectSettings(text: string, cfg: GeneratorConfig, nozzleCount: n
     const min = [fmt(cfg.square_x), fmt(cfg.square_y)];
     const max = [fmt(cfg.square_x + cfg.circle_diameter), fmt(cfg.square_y + cfg.circle_diameter)];
     const nozzle = Array.from({ length: nozzleCount }, () => fmt(cfg.nozzle_size));
+    const filament = bambuFilamentMetadata(cfg);
     data.layer_height = assignLike(data.layer_height, fmt(cfg.layer_height), cfg.layer_height);
     data.initial_layer_print_height = assignLike(data.initial_layer_print_height, fmt(cfg.layer_height), cfg.layer_height);
     data.nozzle_diameter = Array.isArray(data.nozzle_diameter) ? data.nozzle_diameter.map((value: unknown) => assignLike(value, fmt(cfg.nozzle_size), cfg.nozzle_size)) : nozzle;
+    data.default_filament_profile = assignArrayLike(data.default_filament_profile, filament.profile, nozzleCount);
+    data.filament_settings_id = assignArrayLike(data.filament_settings_id, filament.profile, nozzleCount);
+    data.filament_type = assignArrayLike(data.filament_type, filament.type, nozzleCount);
+    data.filament_vendor = assignArrayLike(data.filament_vendor, filament.vendor, nozzleCount);
     data.first_layer_print_min = min;
     data.first_layer_print_max = max;
     data.name = "LESIC";
@@ -320,6 +331,21 @@ function nozzleCountFromTemplate(entries: ZipEntry[], cfg: GeneratorConfig) {
 
 function assignLike(existing: unknown, stringValue: string, numberValue: number) {
   return typeof existing === "number" ? numberValue : stringValue;
+}
+
+function assignArrayLike(existing: unknown, value: string, count: number) {
+  if (Array.isArray(existing)) return existing.map(() => value);
+  return Array.from({ length: Math.max(1, count) }, () => value);
+}
+
+function bambuFilamentMetadata(cfg: GeneratorConfig) {
+  const type = cfg.filament_type.trim().toUpperCase() || "PLA";
+  const vendor = cfg.filament_brand.trim() || "Generic";
+  return {
+    type,
+    vendor,
+    profile: `${vendor} ${type} @LESIC`,
+  };
 }
 
 function round(value: number) {
