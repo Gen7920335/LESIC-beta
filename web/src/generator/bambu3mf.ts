@@ -136,12 +136,17 @@ function insertMetadataIntoPrefix(prefix: string, cfg: GeneratorConfig, totalLay
 
 function patchTemplatePrefix(prefix: string, cfg: GeneratorConfig, totalLayers: number, totalHeight: number) {
   const filament = bambuFilamentMetadata(cfg);
+  const nozzle = bambuNozzleMetadata(cfg);
   return patchG29Footprint(prefix, cfg)
     .replace(/(; total layer number:\s*)\d+/i, `$1${totalLayers}`)
     .replace(/(; max_z_height:\s*)[-+]?\d*\.?\d+/i, `$1${fmt(totalHeight)}`)
     .replace(/(; layer_height =\s*)[-+]?\d*\.?\d+/gi, `$1${fmt(cfg.layer_height)}`)
     .replace(/(; initial_layer_print_height =\s*)[-+]?\d*\.?\d+/gi, `$1${fmt(cfg.layer_height)}`)
-    .replace(/(; nozzle_diameter =\s*)[-+]?\d*\.?\d+(?:,[-+]?\d*\.?\d+)*/gi, `$1${fmt(cfg.nozzle_size)}`)
+    .replace(/(; nozzle_diameter =\s*)[-+]?\d*\.?\d+(?:,[-+]?\d*\.?\d+)*/gi, `$1${nozzle.size}`)
+    .replace(/(; printer_variant =\s*)[-+]?\d*\.?\d+/gi, `$1${nozzle.size}`)
+    .replace(/(; printer_settings_id =\s*)("?)([^"\r\n;]*?\s)?[-+]?\d*\.?\d+\s+nozzle\2/gi, (_match, a: string, q: string, prefixText = "") => `${a}${q}${prefixText}${nozzle.size} nozzle${q}`)
+    .replace(/(; print_compatible_printers =\s*)("?)([^"\r\n;]*?\s)?[-+]?\d*\.?\d+\s+nozzle\2/gi, (_match, a: string, q: string, prefixText = "") => `${a}${q}${prefixText}${nozzle.size} nozzle${q}`)
+    .replace(/(; upward_compatible_machine =\s*)([^\r\n]*)/gi, (_match, a: string, value: string) => `${a}${replaceNozzleProfileText(value, nozzle.size)}`)
     .replace(/(; default_filament_profile =\s*)"[^"]*"/gi, `$1"${filament.profile}"`)
     .replace(/(; filament_settings_id =\s*)"[^"]*"/gi, `$1"${filament.profile}"`)
     .replace(/(; filament_type =\s*)[A-Za-z0-9_-]+/gi, `$1${filament.type}`)
@@ -302,11 +307,16 @@ function patchProjectSettings(text: string, cfg: GeneratorConfig, nozzleCount: n
     const data = JSON.parse(text);
     const min = [fmt(cfg.square_x), fmt(cfg.square_y)];
     const max = [fmt(cfg.square_x + cfg.circle_diameter), fmt(cfg.square_y + cfg.circle_diameter)];
-    const nozzle = Array.from({ length: nozzleCount }, () => fmt(cfg.nozzle_size));
+    const nozzle = bambuNozzleMetadata(cfg);
+    const nozzleValues = Array.from({ length: nozzleCount }, () => nozzle.size);
     const filament = bambuFilamentMetadata(cfg);
     data.layer_height = assignLike(data.layer_height, fmt(cfg.layer_height), cfg.layer_height);
     data.initial_layer_print_height = assignLike(data.initial_layer_print_height, fmt(cfg.layer_height), cfg.layer_height);
-    data.nozzle_diameter = Array.isArray(data.nozzle_diameter) ? data.nozzle_diameter.map((value: unknown) => assignLike(value, fmt(cfg.nozzle_size), cfg.nozzle_size)) : nozzle;
+    data.nozzle_diameter = Array.isArray(data.nozzle_diameter) ? data.nozzle_diameter.map((value: unknown) => assignLike(value, nozzle.size, cfg.nozzle_size)) : nozzleValues;
+    data.printer_variant = assignLike(data.printer_variant, nozzle.size, cfg.nozzle_size);
+    data.printer_settings_id = replaceNozzleProfileText(typeof data.printer_settings_id === "string" ? data.printer_settings_id : `${data.printer_model || "Bambu Lab"} ${nozzle.size} nozzle`, nozzle.size);
+    data.print_compatible_printers = assignNozzleProfileArray(data.print_compatible_printers, data.printer_settings_id, nozzle.size);
+    data.upward_compatible_machine = assignNozzleProfileArray(data.upward_compatible_machine, data.upward_compatible_machine, nozzle.size);
     data.default_filament_profile = assignArrayLike(data.default_filament_profile, filament.profile, nozzleCount);
     data.filament_settings_id = assignArrayLike(data.filament_settings_id, filament.profile, nozzleCount);
     data.filament_type = assignArrayLike(data.filament_type, filament.type, nozzleCount);
@@ -336,6 +346,26 @@ function assignLike(existing: unknown, stringValue: string, numberValue: number)
 function assignArrayLike(existing: unknown, value: string, count: number) {
   if (Array.isArray(existing)) return existing.map(() => value);
   return Array.from({ length: Math.max(1, count) }, () => value);
+}
+
+function assignNozzleProfileArray(existing: unknown, fallback: unknown, nozzleSize: string) {
+  if (Array.isArray(existing)) return existing.map((value) => typeof value === "string" ? replaceNozzleProfileText(value, nozzleSize) : value);
+  if (Array.isArray(fallback)) return fallback.map((value) => typeof value === "string" ? replaceNozzleProfileText(value, nozzleSize) : value);
+  if (typeof fallback === "string") return [replaceNozzleProfileText(fallback, nozzleSize)];
+  return [];
+}
+
+function replaceNozzleProfileText(value: string, nozzleSize: string) {
+  return value
+    .replace(/(\bBambu Lab [^";,\]\r\n]*?)\s+[-+]?\d*\.?\d+\s+nozzle\b/g, (_match, model: string) => `${model} ${nozzleSize} nozzle`)
+    .replace(/(\bprinter_settings_id\s*=\s*"?[^"\r\n;]*?\s)[-+]?\d*\.?\d+(\s+nozzle"?)/gi, `$1${nozzleSize}$2`)
+    .replace(/(\bprint_compatible_printers\s*=\s*"?[^"\r\n;]*?\s)[-+]?\d*\.?\d+(\s+nozzle"?)/gi, `$1${nozzleSize}$2`);
+}
+
+function bambuNozzleMetadata(cfg: GeneratorConfig) {
+  return {
+    size: fmt(cfg.nozzle_size),
+  };
 }
 
 function bambuFilamentMetadata(cfg: GeneratorConfig) {
